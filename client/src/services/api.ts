@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
+  baseURL: import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL + '/api/v1' : '/api/v1',
   timeout: 10000
 })
 
@@ -17,7 +17,7 @@ api.interceptors.request.use(
   error => Promise.reject(error)
 )
 
-// 响应拦截器
+// 响应拦截器 - 返回 data
 api.interceptors.response.use(
   response => response.data,
   error => {
