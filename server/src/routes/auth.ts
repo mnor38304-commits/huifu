@@ -46,7 +46,7 @@ router.post('/send-email', (req, res: Response<ApiResponse>) => {
   const code = String(Math.floor(100000 + Math.random() * 900000));
   verificationCodes.set(email, { code, expires: Date.now() + 5 * 60 * 1000 });
   
-  // 真实发送邮件
+  // 真实发送邮件（异步，不阻塞响应）
   sendEmail({
     to: email,
     subject: 'VCC虚拟卡系统 - 邮箱验证码',
@@ -68,7 +68,7 @@ router.post('/send-email', (req, res: Response<ApiResponse>) => {
         </div>
       </div>
     `
-  }).catch(err => console.error('邮件发送失败:', err));
+  });
   
   res.json({ code: 0, message: '验证码已发送至邮箱', timestamp: Date.now() });
 });
@@ -119,7 +119,7 @@ router.post('/register', async (req, res: Response<ApiResponse>) => {
       to: email,
       subject: '🎉 注册成功 - VCC虚拟卡系统',
       html: regSuccessTemplate(userNo, phone || email)
-    }).catch(err => console.error('注册邮件发送失败:', err));
+    });
   }
   
   res.json({
@@ -205,7 +205,7 @@ router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
           </div>
         </div>
       `
-    }).catch(err => console.error('密码重置邮件发送失败:', err));
+    });
   }
   
   res.json({ code: 0, message: '密码重置成功', timestamp: Date.now() });
