@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ApiResponse, Card } from '../types';
+import { sendEmail, cardOpenedTemplate, topupSuccessTemplate } from '../mail';
 
 const router = Router();
 
@@ -47,7 +48,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
 });
 
 // 开卡
-router.post('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const { cardName, cardType, creditLimit, singleLimit, dailyLimit, purpose } = req.body;
   
   if (!cardName || !cardType || !creditLimit) {
@@ -66,6 +67,18 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) 
     INSERT INTO cards (card_no, card_no_masked, user_id, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, cvv, purpose)
     VALUES (?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?)
   `).run(cardNo, masked, req.user!.userId, cardName, cardType, creditLimit, singleLimit || null, dailyLimit || null, expireDate, cvv, purpose || null);
+  
+  // 获取用户邮箱
+  const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
+  
+  // 开卡成功 - 发送邮件通知
+  if (user?.email) {
+    sendEmail({
+      to: user.email,
+      subject: '💳 开卡成功 - VCC虚拟卡系统',
+      html: cardOpenedTemplate(masked, cardName, creditLimit)
+    }).catch(err => console.error('开卡邮件发送失败:', err));
+  }
   
   res.json({
     code: 0,
@@ -118,14 +131,14 @@ router.get('/:id/reveal', authMiddleware, (req: AuthRequest, res: Response<ApiRe
 });
 
 // 充值
-router.post('/:id/topup', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const { amount } = req.body;
   
   if (!amount || amount <= 0) {
     return res.json({ code: 400, message: '请输入有效金额', timestamp: Date.now() });
   }
   
-  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as Card | undefined;
+  const card = db.prepare('SELECT c.*, u.email FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?').get(req.params.id, req.user!.userId) as (Card & { email?: string }) | undefined;
   
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
@@ -145,6 +158,15 @@ router.post('/:id/topup', authMiddleware, (req: AuthRequest, res: Response<ApiRe
     INSERT INTO transactions (txn_no, card_id, user_id, txn_type, amount, currency, status, merchant_name, txn_time)
     VALUES (?, ?, ?, 'TOPUP', ?, 'USD', 1, '账户充值', CURRENT_TIMESTAMP)
   `).run(txnNo, card.id, req.user!.userId, amount);
+  
+  // 充值成功 - 发送邮件通知
+  if (card.email) {
+    sendEmail({
+      to: card.email,
+      subject: '💰 充值成功 - VCC虚拟卡系统',
+      html: topupSuccessTemplate(card.card_no_masked, amount, newBalance)
+    }).catch(err => console.error('充值邮件发送失败:', err));
+  }
   
   res.json({ code: 0, message: '充值成功', data: { newBalance }, timestamp: Date.now() });
 });
