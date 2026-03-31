@@ -1,20 +1,4 @@
-import nodemailer from 'nodemailer'
-
-// Zoho SMTP 配置
-const transporter = nodemailer.createTransport({
-  host: 'smtp.zoho.com',
-  port: 465,
-  secure: true,  // 使用 SSL
-  auth: {
-    user: process.env.SMTP_USER || 'admin@newkuajing.com',
-    pass: process.env.SMTP_PASS || ''
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000
-})
+// 使用 Node.js 原生 https 发送邮件，绕过 nodemailer 依赖问题
 
 interface EmailOptions {
   to: string
@@ -22,25 +6,83 @@ interface EmailOptions {
   html: string
 }
 
-export async function sendEmail({ to, subject, html }: EmailOptions) {
+async function sendWithZoho({ to, subject, html }: EmailOptions): Promise<void> {
+  const smtpUser = process.env.SMTP_USER || 'admin@newkuajing.com'
+  const smtpPass = process.env.SMTP_PASS || ''
+  
+  // 构造 MIME 邮件
+  const boundary = '----=_Part_' + Date.now()
+  
+  const headers = [
+    `From: "VCC虚拟卡系统" <${smtpUser}>`,
+    `To: ${to}`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    `Date: ${new Date().toUTCString()}`,
+  ].join('\r\n')
+  
+  const body = [
+    `--${boundary}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    Buffer.from(html).toString('base64'),
+    `--${boundary}--`,
+  ].join('\r\n')
+  
+  // SMTP AUTH 字符串
+  const auth = Buffer.from(`${smtpUser}:${smtpPass}`).toString('base64')
+  
+  // 使用 curl 发送（Railway alpine 自带 curl）
+  const { execSync } = await import('child_process')
+  
+  const cmd = [
+    'curl',
+    '-s',
+    '--url', `smtp://smtp.zoho.com:587`,
+    '--mail-from', smtpUser,
+    '--mail-rcpt', to,
+    '--user', `${smtpUser}:${smtpPass}`,
+    '-T', '-',
+  ]
+  
+  // 构造邮件内容通过 stdin 发送
+  const mailContent = `${headers}\r\n\r\n${body}`
+  
+  console.log(`[Email] 正在发送至 ${to}...`)
+  console.log(`[Email] SMTP: smtp.zoho.com:587, User: ${smtpUser}`)
+  
   try {
-    console.log(`[Email] 正在发送至 ${to}...`)
-    console.log(`[Email] SMTP配置: host=smtp.zoho.com, port=465, user=${process.env.SMTP_USER}`)
-    
-    const result = await transporter.sendMail({
-      from: `"VCC虚拟卡系统" <${process.env.SMTP_USER || 'admin@newkuajing.com'}>`,
-      to,
-      subject,
-      html
+    const result = execSync(`curl -s --url "smtp://smtp.zoho.com:587" --mail-from "${smtpUser}" --mail-rcpt "${to}" --user "${smtpUser}:${smtpPass}" -T -`, {
+      input: mailContent,
+      timeout: 15000,
+      encoding: 'utf-8'
     })
-    console.log(`✅ 邮件已发送至: ${to}, messageId: ${result.messageId}`)
-    return result
+    console.log(`✅ 邮件发送成功: ${to}`)
   } catch (err: any) {
-    console.error(`❌ 邮件发送失败:`, err.message)
-    console.error(`   错误码: ${err.code}`)
-    console.error(`   响应: ${err.response}`)
-    return null
+    console.error(`❌ 邮件发送失败: ${err.message}`)
+    // 尝试 SSL 465 端口
+    try {
+      console.log(`[Email] 尝试 SSL 465 端口...`)
+      const result2 = execSync(`curl -s --url "smtps://smtp.zoho.com:465" --mail-from "${smtpUser}" --mail-rcpt "${to}" --user "${smtpUser}:${smtpPass}" -T -`, {
+        input: mailContent,
+        timeout: 15000,
+        encoding: 'utf-8'
+      })
+      console.log(`✅ 邮件发送成功(SSL): ${to}`)
+    } catch (err2: any) {
+      console.error(`❌ SSL 465 也失败: ${err2.message}`)
+    }
   }
+}
+
+// 同步包装版本（用于 Express 路由）
+export function sendEmail(opts: EmailOptions): void {
+  // 不等待结果，防止阻塞响应
+  sendWithZoho(opts).catch(err => {
+    console.error('邮件发送异常:', err.message)
+  })
 }
 
 // ── 邮件模板 ──────────────────────────────────────────────────
@@ -59,10 +101,10 @@ export function regSuccessTemplate(userNo: string, phone: string) {
           <p style="margin:8px 0 0;"><strong>注册手机：</strong>${phone}</p>
         </div>
         <p style="font-size:14px;color:#666;">现在您可以登录系统，申请虚拟卡，享受便捷的跨境支付服务。</p>
-        <a href="${process.env.CLIENT_URL || 'https://huifu-production-20d5.up.railway.app'}" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">立即登录</a>
+        <a href="https://huifu-production-20d5.up.railway.app" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">立即登录</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
-        <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统 · 请勿回复此邮件</p>
+        <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
   `
@@ -84,7 +126,7 @@ export function passwordResetTemplate(code: string) {
         <p style="font-size:14px;color:#999;">验证码 <strong>5 分钟内有效</strong>，如非本人操作请忽略此邮件。</p>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
-        <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统 · 请勿回复此邮件</p>
+        <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
   `
@@ -104,7 +146,7 @@ export function cardOpenedTemplate(cardNo: string, cardName: string, creditLimit
           <p style="margin:8px 0 0;"><strong>卡名：</strong>${cardName}</p>
           <p style="margin:8px 0 0;"><strong>额度：</strong>$${creditLimit.toFixed(2)} USD</p>
         </div>
-        <a href="${process.env.CLIENT_URL || 'https://huifu-production-20d5.up.railway.app/cards'}" style="display:inline-block;background:#52c41a;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
+        <a href="https://huifu-production-20d5.up.railway.app/cards" style="display:inline-block;background:#52c41a;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
@@ -127,7 +169,7 @@ export function topupSuccessTemplate(cardNo: string, amount: number, balance: nu
           <p style="margin:8px 0 0;"><strong>充值金额：</strong><span style="color:#52c41a;font-size:20px;font-weight:bold;">+$${amount.toFixed(2)} USD</span></p>
           <p style="margin:8px 0 0;"><strong>当前余额：</strong><span style="color:#1890ff;font-weight:bold;">$${balance.toFixed(2)} USD</span></p>
         </div>
-        <a href="${process.env.CLIENT_URL || 'https://huifu-production-20d5.up.railway.app/cards'}" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
+        <a href="https://huifu-production-20d5.up.railway.app/cards" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
@@ -151,7 +193,7 @@ export function transactionDeclinedTemplate(cardNo: string, merchant: string, am
           <p style="margin:8px 0 0;"><strong>金额：</strong>$${amount.toFixed(2)} USD</p>
           <p style="margin:8px 0 0;color:#ff4d4f;"><strong>原因：</strong>${reason}</p>
         </div>
-        <a href="${process.env.CLIENT_URL || 'https://huifu-production-20d5.up.railway.app/cards'}" style="display:inline-block;background:#ff4d4f;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
+        <a href="https://huifu-production-20d5.up.railway.app/cards" style="display:inline-block;background:#ff4d4f;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
@@ -176,7 +218,7 @@ export function balanceChangeTemplate(cardNo: string, type: string, amount: numb
           <p style="margin:8px 0 0;"><strong>变动金额：</strong><span style="color:${color};font-weight:bold;">${amount > 0 ? '+' : ''}$${Math.abs(amount).toFixed(2)} USD</span></p>
           <p style="margin:8px 0 0;"><strong>当前余额：</strong><span style="color:#1890ff;font-weight:bold;">$${balance.toFixed(2)} USD</span></p>
         </div>
-        <a href="${process.env.CLIENT_URL || 'https://huifu-production-20d5.up.railway.app/transactions'}" style="display:inline-block;background:${color};color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看交易</a>
+        <a href="https://huifu-production-20d5.up.railway.app/transactions" style="display:inline-block;background:${color};color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看交易</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
