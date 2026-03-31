@@ -1,0 +1,120 @@
+import { useState, useEffect } from 'react'
+import { Table, Input, Select, Button, Tag, Space, Card, Modal, Descriptions, message } from 'antd'
+import { SearchOutlined, EyeOutlined, StopOutlined, CheckOutlined } from '@ant-design/icons'
+import { getMerchants, getMerchantDetail, setMerchantStatus } from '../api'
+
+const { Option } = Select
+
+const kycMap: Record<number, { text: string; color: string }> = {
+  0: { text: '未认证', color: 'default' }, 1: { text: '认证中', color: 'processing' },
+  2: { text: '已认证', color: 'success' }, 3: { text: '认证失败', color: 'error' }
+}
+const statusMap: Record<number, { text: string; color: string }> = {
+  1: { text: '正常', color: 'green' }, 2: { text: '禁用', color: 'red' }
+}
+
+export default function Merchants() {
+  const [list, setList] = useState<any[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [filters, setFilters] = useState<any>({ page: 1, pageSize: 20 })
+  const [detail, setDetail] = useState<any>(null)
+  const [detailVisible, setDetailVisible] = useState(false)
+
+  useEffect(() => { load() }, [filters])
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const r: any = await getMerchants(filters)
+      if (r.code === 0) { setList(r.data.list); setTotal(r.data.total) }
+    } finally { setLoading(false) }
+  }
+
+  const viewDetail = async (id: number) => {
+    const r: any = await getMerchantDetail(id)
+    if (r.code === 0) { setDetail(r.data); setDetailVisible(true) }
+  }
+
+  const toggleStatus = async (id: number, cur: number) => {
+    const newStatus = cur === 1 ? 2 : 1
+    const r: any = await setMerchantStatus(id, newStatus)
+    if (r.code === 0) { message.success('操作成功'); load() }
+  }
+
+  const cols = [
+    { title: '用户编号', dataIndex: 'user_no', key: 'user_no', width: 160 },
+    { title: '手机号', dataIndex: 'phone', key: 'phone', width: 130 },
+    { title: '邮箱', dataIndex: 'email', key: 'email', width: 180 },
+    { title: 'KYC状态', dataIndex: 'kyc_status', key: 'kyc_status', width: 100,
+      render: (v: number) => <Tag color={kycMap[v]?.color}>{kycMap[v]?.text}</Tag> },
+    { title: '卡片数', dataIndex: 'card_count', key: 'card_count', width: 80 },
+    { title: '账户余额', dataIndex: 'total_balance', key: 'total_balance', width: 120,
+      render: (v: number) => <span style={{ color: '#52c41a', fontWeight: 600 }}>${(v||0).toFixed(2)}</span> },
+    { title: '状态', dataIndex: 'status', key: 'status', width: 80,
+      render: (v: number) => <Tag color={statusMap[v]?.color}>{statusMap[v]?.text}</Tag> },
+    { title: '注册时间', dataIndex: 'created_at', key: 'created_at', width: 160,
+      render: (v: string) => v?.split('T')[0] },
+    { title: '操作', key: 'action', fixed: 'right' as const, width: 160,
+      render: (_: any, r: any) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => viewDetail(r.id)}><EyeOutlined /> 详情</Button>
+          <Button type="link" size="small" danger={r.status===1} onClick={() => toggleStatus(r.id, r.status)}>
+            {r.status === 1 ? <><StopOutlined /> 禁用</> : <><CheckOutlined /> 启用</>}
+          </Button>
+        </Space>
+      )
+    }
+  ]
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 16, borderRadius: 8 }}>
+        <Space wrap>
+          <Input placeholder="搜索手机号/邮箱/用户编号" prefix={<SearchOutlined />} style={{ width: 240 }}
+            onChange={e => setFilters({ ...filters, keyword: e.target.value, page: 1 })} />
+          <Select placeholder="账号状态" style={{ width: 120 }} allowClear onChange={v => setFilters({ ...filters, status: v, page: 1 })}>
+            <Option value={1}>正常</Option><Option value={2}>禁用</Option>
+          </Select>
+          <Select placeholder="KYC状态" style={{ width: 120 }} allowClear onChange={v => setFilters({ ...filters, kycStatus: v, page: 1 })}>
+            <Option value={0}>未认证</Option><Option value={1}>认证中</Option>
+            <Option value={2}>已认证</Option><Option value={3}>认证失败</Option>
+          </Select>
+        </Space>
+      </Card>
+
+      <Card style={{ borderRadius: 8 }}>
+        <div style={{ marginBottom: 12, color: '#666' }}>共 <strong>{total}</strong> 个商户</div>
+        <Table columns={cols} dataSource={list} rowKey="id" loading={loading} scroll={{ x: 1200 }}
+          pagination={{ total, current: filters.page, pageSize: filters.pageSize, showSizeChanger: true,
+            onChange: (p, ps) => setFilters({ ...filters, page: p, pageSize: ps }) }} />
+      </Card>
+
+      <Modal title="商户详情" open={detailVisible} onCancel={() => setDetailVisible(false)} footer={null} width={700}>
+        {detail && <>
+          <Descriptions title="基本信息" column={2} bordered size="small" style={{ marginBottom: 16 }}>
+            <Descriptions.Item label="用户编号">{detail.user?.user_no}</Descriptions.Item>
+            <Descriptions.Item label="手机号">{detail.user?.phone}</Descriptions.Item>
+            <Descriptions.Item label="邮箱">{detail.user?.email}</Descriptions.Item>
+            <Descriptions.Item label="KYC状态"><Tag color={kycMap[detail.user?.kyc_status]?.color}>{kycMap[detail.user?.kyc_status]?.text}</Tag></Descriptions.Item>
+            <Descriptions.Item label="交易笔数">{detail.txnStats?.count}</Descriptions.Item>
+            <Descriptions.Item label="交易总额">${(detail.txnStats?.volume||0).toFixed(2)}</Descriptions.Item>
+          </Descriptions>
+          {detail.kyc && <Descriptions title="KYC信息" column={2} bordered size="small" style={{ marginBottom: 16 }}>
+            <Descriptions.Item label="姓名">{detail.kyc?.real_name}</Descriptions.Item>
+            <Descriptions.Item label="证件号">{detail.kyc?.id_number}</Descriptions.Item>
+          </Descriptions>}
+          <div><strong>卡片列表</strong>
+            <Table size="small" style={{ marginTop: 8 }} dataSource={detail.cards} rowKey="id" pagination={false}
+              columns={[
+                { title: '卡号', dataIndex: 'card_no_masked' },
+                { title: '名称', dataIndex: 'card_name' },
+                { title: '余额', dataIndex: 'balance', render: (v: number) => `$${v?.toFixed(2)}` },
+                { title: '状态', dataIndex: 'status', render: (v: number) => <Tag color={v===1?'green':v===2?'orange':'default'}>{v===1?'正常':v===2?'冻结':'其他'}</Tag> },
+              ]} />
+          </div>
+        </>}
+      </Modal>
+    </div>
+  )
+}
