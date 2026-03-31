@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { authMiddleware, generateToken, AuthRequest } from '../middleware/auth';
 import { ApiResponse, User } from '../types';
+import { sendEmail, regSuccessTemplate, passwordResetTemplate } from '../mail';
 
 const router = Router();
 
@@ -34,7 +35,7 @@ router.post('/send-sms', (req, res: Response<ApiResponse>) => {
   res.json({ code: 0, message: '验证码已发送', data: { mockCode: code }, timestamp: Date.now() });
 });
 
-// 发送邮箱验证码
+// 发送邮箱验证码（真实SMTP）
 router.post('/send-email', (req, res: Response<ApiResponse>) => {
   const { email } = req.body;
   
@@ -43,11 +44,33 @@ router.post('/send-email', (req, res: Response<ApiResponse>) => {
   }
   
   const code = String(Math.floor(100000 + Math.random() * 900000));
-  verificationCodes.set(email, { code, expires: Date.now() + 10 * 60 * 1000 });
+  verificationCodes.set(email, { code, expires: Date.now() + 5 * 60 * 1000 });
   
-  console.log(`[Email] 验证码已发送至 ${email}: ${code}`);
+  // 真实发送邮件
+  sendEmail({
+    to: email,
+    subject: 'VCC虚拟卡系统 - 邮箱验证码',
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+        <div style="background:#1890ff;padding:24px;text-align:center;">
+          <h1 style="color:#fff;margin:0;">📧 邮箱验证</h1>
+        </div>
+        <div style="padding:32px;background:#fafafa;">
+          <p style="font-size:16px;">您好！</p>
+          <p style="font-size:16px;">您的验证码是：</p>
+          <div style="background:#fff;padding:24px;border-radius:8px;text-align:center;margin:20px 0;border:2px dashed #1890ff;">
+            <p style="font-size:36px;font-weight:bold;color:#1890ff;margin:0;letter-spacing:8px;">${code}</p>
+          </div>
+          <p style="font-size:14px;color:#999;">验证码 <strong>5 分钟内有效</strong>，如非本人操作请忽略此邮件。</p>
+        </div>
+        <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
+          <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
+        </div>
+      </div>
+    `
+  }).catch(err => console.error('邮件发送失败:', err));
   
-  res.json({ code: 0, message: '验证码已发送', data: { mockCode: code }, timestamp: Date.now() });
+  res.json({ code: 0, message: '验证码已发送至邮箱', timestamp: Date.now() });
 });
 
 // 用户注册
@@ -90,6 +113,15 @@ router.post('/register', async (req, res: Response<ApiResponse>) => {
   
   verificationCodes.delete(account);
   
+  // 注册成功 - 发送邮件通知
+  if (email) {
+    sendEmail({
+      to: email,
+      subject: '🎉 注册成功 - VCC虚拟卡系统',
+      html: regSuccessTemplate(userNo, phone || email)
+    }).catch(err => console.error('注册邮件发送失败:', err));
+  }
+  
   res.json({
     code: 0,
     message: '注册成功',
@@ -131,7 +163,7 @@ router.post('/login', async (req, res: Response<ApiResponse>) => {
   });
 });
 
-// 重置密码
+// 重置密码（真实邮件通知）
 router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
   const { account, code, newPassword } = req.body;
   
@@ -151,6 +183,30 @@ router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
   db.prepare('UPDATE users SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, salt, user.id);
   
   verificationCodes.delete(account);
+  
+  // 密码重置成功 - 发送邮件通知
+  if (user.email) {
+    sendEmail({
+      to: user.email,
+      subject: '🔐 密码重置成功 - VCC虚拟卡系统',
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+          <div style="background:#52c41a;padding:24px;text-align:center;">
+            <h1 style="color:#fff;margin:0;">✅ 密码重置成功</h1>
+          </div>
+          <div style="padding:32px;background:#fafafa;">
+            <p style="font-size:16px;">您好！</p>
+            <p style="font-size:16px;">您的账户密码已成功重置。</p>
+            <p style="font-size:14px;color:#666;">如果这不是您本人的操作，请立即联系客服。</p>
+            <a href="${process.env.CLIENT_URL || 'https://huifu-production-20d5.up.railway.app'}" style="display:inline-block;background:#52c41a;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;margin-top:16px;">立即登录</a>
+          </div>
+          <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
+            <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
+          </div>
+        </div>
+      `
+    }).catch(err => console.error('密码重置邮件发送失败:', err));
+  }
   
   res.json({ code: 0, message: '密码重置成功', timestamp: Date.now() });
 });
@@ -178,7 +234,6 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>)
 router.put('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   const { nickname, avatar } = req.body;
   
-  // 这里可以扩展用户信息表
   res.json({ code: 0, message: '更新成功', timestamp: Date.now() });
 });
 
