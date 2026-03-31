@@ -1,23 +1,21 @@
-# 先安装依赖
-FROM node:20-alpine AS deps
-WORKDIR /app
-COPY server/package*.json ./server/
+FROM node:20
+
 WORKDIR /app/server
+
+# 先复制 package.json 和 tsconfig
+COPY package*.json tsconfig.json ./
+
+# 安装依赖
 RUN npm install
 
-# 构建
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY server/ ./server/
-WORKDIR /app/server
-RUN npm run build
+# 复制源码
+COPY src/ ./src/
 
-# 运行
-FROM node:20-alpine
-WORKDIR /app
-COPY --from=builder /app/server/dist ./dist
-COPY --from=builder /app/server/node_modules ./node_modules
-COPY server/package*.json ./
+# 构建
+RUN npx tsc
+
+# 暴露端口
 EXPOSE 3001
+
+# 启动
 CMD ["node", "dist/index.js"]
