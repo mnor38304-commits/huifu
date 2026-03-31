@@ -77,7 +77,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       to: user.email,
       subject: '💳 开卡成功 - VCC虚拟卡系统',
       html: cardOpenedTemplate(masked, cardName, creditLimit)
-    }).catch(err => console.error('开卡邮件发送失败:', err));
+    });
   }
   
   res.json({
@@ -165,7 +165,7 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
       to: card.email,
       subject: '💰 充值成功 - VCC虚拟卡系统',
       html: topupSuccessTemplate(card.card_no_masked, amount, newBalance)
-    }).catch(err => console.error('充值邮件发送失败:', err));
+    });
   }
   
   res.json({ code: 0, message: '充值成功', data: { newBalance }, timestamp: Date.now() });
