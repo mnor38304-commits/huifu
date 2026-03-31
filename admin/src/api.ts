@@ -1,6 +1,9 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: '/api/admin', timeout: 10000 })
+const api = axios.create({ 
+  baseURL: import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL + '/admin' : '/api/admin', 
+  timeout: 10000 
+})
 
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('admin_token')
