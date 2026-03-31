@@ -55,13 +55,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function start() {
   await initDatabase();
 
-  // 初始化种子数据
-  const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as any).c;
-  if (userCount === 0) {
-    const { default: seed } = await import('./seed');
-    await seed();
-  }
-
   // 初始化默认超级管理员
   const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
   if (adminCount === 0) {
