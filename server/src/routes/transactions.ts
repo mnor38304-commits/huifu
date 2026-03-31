@@ -124,7 +124,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
           amount,
           '余额不足'
         )
-      }).catch(err => console.error('余额不足通知失败:', err));
+      });
     }
     
     // 创建失败交易记录
@@ -155,7 +155,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       to: card.email,
       subject: `💳 余额变动提醒 - ${typeName} - VCC虚拟卡系统`,
       html: balanceChangeTemplate(card.card_no_masked, typeName, -amount, newBalance)
-    }).catch(err => console.error('余额变动通知失败:', err));
+    });
   }
   
   res.json({
