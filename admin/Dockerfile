@@ -10,7 +10,7 @@ ENV VITE_API_BASE_URL=https://huifu-production.up.railway.app
 RUN npm run build
 
 FROM nginx:alpine
-RUN apk add --no-cache bash && apk add --no-cache openssl
+RUN apk add --no-cache bash
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 8080
