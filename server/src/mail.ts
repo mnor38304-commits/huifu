@@ -1,4 +1,4 @@
-// 使用 Node.js 原生 https 发送邮件，绕过 nodemailer 依赖问题
+import nodemailer from 'nodemailer'
 
 interface EmailOptions {
   to: string
@@ -6,86 +6,106 @@ interface EmailOptions {
   html: string
 }
 
-async function sendWithZoho({ to, subject, html }: EmailOptions): Promise<void> {
-  const smtpUser = process.env.SMTP_USER || 'admin@newkuajing.com'
-  const smtpPass = process.env.SMTP_PASS || ''
-  
-  // 构造 MIME 邮件
-  const boundary = '----=_Part_' + Date.now()
-  
-  const headers = [
-    `From: "VCC虚拟卡系统" <${smtpUser}>`,
-    `To: ${to}`,
-    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
-    `MIME-Version: 1.0`,
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    `Date: ${new Date().toUTCString()}`,
-  ].join('\r\n')
-  
-  const body = [
-    `--${boundary}`,
-    `Content-Type: text/html; charset=UTF-8`,
-    `Content-Transfer-Encoding: base64`,
-    ``,
-    Buffer.from(html).toString('base64'),
-    `--${boundary}--`,
-  ].join('\r\n')
-  
-  // SMTP AUTH 字符串
-  const auth = Buffer.from(`${smtpUser}:${smtpPass}`).toString('base64')
-  
-  // 使用 curl 发送（Railway alpine 自带 curl）
-  const { execSync } = await import('child_process')
-  
-  const cmd = [
-    'curl',
-    '-s',
-    '--url', `smtp://smtp.zoho.com:587`,
-    '--mail-from', smtpUser,
-    '--mail-rcpt', to,
-    '--user', `${smtpUser}:${smtpPass}`,
-    '-T', '-',
-  ]
-  
-  // 构造邮件内容通过 stdin 发送
-  const mailContent = `${headers}\r\n\r\n${body}`
-  
-  console.log(`[Email] 正在发送至 ${to}...`)
-  console.log(`[Email] SMTP: smtp.zoho.com:587, User: ${smtpUser}`)
-  
-  try {
-    const result = execSync(`curl -s --url "smtp://smtp.zoho.com:587" --mail-from "${smtpUser}" --mail-rcpt "${to}" --user "${smtpUser}:${smtpPass}" -T -`, {
-      input: mailContent,
-      timeout: 15000,
-      encoding: 'utf-8'
+interface MailConfig {
+  host: string
+  port: number
+  secure: boolean
+  user: string
+  pass: string
+  from: string
+  fromName: string
+}
+
+let cachedTransporter: nodemailer.Transporter | null = null
+let cachedTransportKey = ''
+
+function getClientUrl() {
+  return process.env.CLIENT_URL || 'http://localhost:5173'
+}
+
+function getMailConfig(): MailConfig {
+  const host = process.env.SMTP_HOST?.trim()
+  const user = process.env.SMTP_USER?.trim()
+  const pass = process.env.SMTP_PASS?.trim()
+  const from = (process.env.SMTP_FROM || user || '').trim()
+  const fromName = (process.env.SMTP_FROM_NAME || 'VCC虚拟卡系统').trim()
+  const port = Number(process.env.SMTP_PORT || 465)
+  const secure = String(process.env.SMTP_SECURE || port === 465).toLowerCase() === 'true'
+
+  if (!host || !user || !pass || !from) {
+    throw new Error('SMTP 未配置完整，请设置 SMTP_HOST、SMTP_PORT、SMTP_USER、SMTP_PASS、SMTP_FROM')
+  }
+
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error('SMTP_PORT 配置无效')
+  }
+
+  return { host, port, secure, user, pass, from, fromName }
+}
+
+function getTransporter(config: MailConfig) {
+  const transportKey = [config.host, config.port, config.secure, config.user].join('|')
+
+  if (!cachedTransporter || cachedTransportKey !== transportKey) {
+    cachedTransporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: {
+        user: config.user,
+        pass: config.pass
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000
     })
-    console.log(`✅ 邮件发送成功: ${to}`)
+    cachedTransportKey = transportKey
+  }
+
+  return cachedTransporter
+}
+
+export async function sendEmail({ to, subject, html }: EmailOptions): Promise<void> {
+  const config = getMailConfig()
+  const transporter = getTransporter(config)
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"${config.fromName}" <${config.from}>`,
+      to,
+      subject,
+      html
+    })
+
+    console.log(`✅ 邮件发送成功: ${to} (${info.messageId})`)
   } catch (err: any) {
-    console.error(`❌ 邮件发送失败: ${err.message}`)
-    // 尝试 SSL 465 端口
-    try {
-      console.log(`[Email] 尝试 SSL 465 端口...`)
-      const result2 = execSync(`curl -s --url "smtps://smtp.zoho.com:465" --mail-from "${smtpUser}" --mail-rcpt "${to}" --user "${smtpUser}:${smtpPass}" -T -`, {
-        input: mailContent,
-        timeout: 15000,
-        encoding: 'utf-8'
-      })
-      console.log(`✅ 邮件发送成功(SSL): ${to}`)
-    } catch (err2: any) {
-      console.error(`❌ SSL 465 也失败: ${err2.message}`)
-    }
+    console.error(`❌ 邮件发送失败: ${to}`, err)
+    throw new Error(err?.message || '邮件发送失败')
   }
 }
 
-// 同步包装版本（用于 Express 路由）
-export function sendEmail(opts: EmailOptions): void {
-  // 不等待结果，防止阻塞响应
-  sendWithZoho(opts).catch(err => {
-    console.error('邮件发送异常:', err.message)
-  })
-}
-
 // ── 邮件模板 ──────────────────────────────────────────────────
+
+export function verificationCodeTemplate(code: string) {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+      <div style="background:#1890ff;padding:24px;text-align:center;">
+        <h1 style="color:#fff;margin:0;">📧 邮箱验证</h1>
+      </div>
+      <div style="padding:32px;background:#fafafa;">
+        <p style="font-size:16px;">您好！</p>
+        <p style="font-size:16px;">您的验证码是：</p>
+        <div style="background:#fff;padding:24px;border-radius:8px;text-align:center;margin:20px 0;border:2px dashed #1890ff;">
+          <p style="font-size:36px;font-weight:bold;color:#1890ff;margin:0;letter-spacing:8px;">${code}</p>
+        </div>
+        <p style="font-size:14px;color:#999;">验证码 <strong>5 分钟内有效</strong>，如非本人操作请忽略此邮件。</p>
+      </div>
+      <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
+        <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
+      </div>
+    </div>
+  `
+}
 
 export function regSuccessTemplate(userNo: string, phone: string) {
   return `
@@ -101,7 +121,7 @@ export function regSuccessTemplate(userNo: string, phone: string) {
           <p style="margin:8px 0 0;"><strong>注册手机：</strong>${phone}</p>
         </div>
         <p style="font-size:14px;color:#666;">现在您可以登录系统，申请虚拟卡，享受便捷的跨境支付服务。</p>
-        <a href="https://huifu-production-20d5.up.railway.app" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">立即登录</a>
+        <a href="${getClientUrl()}" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">立即登录</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
@@ -146,7 +166,7 @@ export function cardOpenedTemplate(cardNo: string, cardName: string, creditLimit
           <p style="margin:8px 0 0;"><strong>卡名：</strong>${cardName}</p>
           <p style="margin:8px 0 0;"><strong>额度：</strong>$${creditLimit.toFixed(2)} USD</p>
         </div>
-        <a href="https://huifu-production-20d5.up.railway.app/cards" style="display:inline-block;background:#52c41a;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
+        <a href="${getClientUrl()}/cards" style="display:inline-block;background:#52c41a;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
@@ -169,7 +189,7 @@ export function topupSuccessTemplate(cardNo: string, amount: number, balance: nu
           <p style="margin:8px 0 0;"><strong>充值金额：</strong><span style="color:#52c41a;font-size:20px;font-weight:bold;">+$${amount.toFixed(2)} USD</span></p>
           <p style="margin:8px 0 0;"><strong>当前余额：</strong><span style="color:#1890ff;font-weight:bold;">$${balance.toFixed(2)} USD</span></p>
         </div>
-        <a href="https://huifu-production-20d5.up.railway.app/cards" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
+        <a href="${getClientUrl()}/cards" style="display:inline-block;background:#1890ff;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
@@ -193,7 +213,7 @@ export function transactionDeclinedTemplate(cardNo: string, merchant: string, am
           <p style="margin:8px 0 0;"><strong>金额：</strong>$${amount.toFixed(2)} USD</p>
           <p style="margin:8px 0 0;color:#ff4d4f;"><strong>原因：</strong>${reason}</p>
         </div>
-        <a href="https://huifu-production-20d5.up.railway.app/cards" style="display:inline-block;background:#ff4d4f;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
+        <a href="${getClientUrl()}/cards" style="display:inline-block;background:#ff4d4f;color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看卡片</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
@@ -218,7 +238,7 @@ export function balanceChangeTemplate(cardNo: string, type: string, amount: numb
           <p style="margin:8px 0 0;"><strong>变动金额：</strong><span style="color:${color};font-weight:bold;">${amount > 0 ? '+' : ''}$${Math.abs(amount).toFixed(2)} USD</span></p>
           <p style="margin:8px 0 0;"><strong>当前余额：</strong><span style="color:#1890ff;font-weight:bold;">$${balance.toFixed(2)} USD</span></p>
         </div>
-        <a href="https://huifu-production-20d5.up.railway.app/transactions" style="display:inline-block;background:${color};color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看交易</a>
+        <a href="${getClientUrl()}/transactions" style="display:inline-block;background:${color};color:#fff;padding:12px 32px;border-radius:4px;text-decoration:none;font-weight:bold;">查看交易</a>
       </div>
       <div style="padding:16px;text-align:center;color:#999;font-size:12px;">
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
