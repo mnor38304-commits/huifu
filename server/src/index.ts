@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import db, { initDatabase } from './db';
 
 // 商户端路由
-import authRoutes from './routes/auth';
+import authRoutes from './routes/auth-resend';
 import kycRoutes from './routes/kyc';
 import cardRoutes from './routes/cards';
 import transactionRoutes from './routes/transactions';
