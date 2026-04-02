@@ -24,7 +24,7 @@ router.post('/send-sms', (req, res: Response<ApiResponse>) => {
   const code = String(Math.floor(100000 + Math.random() * 900000));
   verificationCodes.set(phone, { code, expires: Date.now() + 10 * 60 * 1000 });
   console.log(`[SMS] 验证码已发送至 ${phone}: ${code}`);
-  res.json({ code: 0, message: '验证码已发送', data: { mockCode: code }, timestamp: Date.now() });
+  return res.json({ code: 0, message: '验证码已发送', data: { mockCode: code }, timestamp: Date.now() });
 });
 
 router.post('/send-email', async (req, res: Response<ApiResponse>) => {
@@ -54,41 +54,67 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
 });
 
 router.post('/register', async (req, res: Response<ApiResponse>) => {
-  const { phone, email, password, code } = req.body;
-  if (!password || password.length < 6) {
-    return res.json({ code: 400, message: '密码至少6位', timestamp: Date.now() });
-  }
-  if (!phone && !email) {
-    return res.json({ code: 400, message: '请输入手机号或邮箱', timestamp: Date.now() });
-  }
-  const account = phone || email;
-  const storedCode = verificationCodes.get(account);
-  if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
-    return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
-  }
-  const existing = db.prepare('SELECT id FROM users WHERE phone = ? OR email = ?').get(phone, email);
-  if (existing) {
-    return res.json({ code: 400, message: '该账号已注册', timestamp: Date.now() });
-  }
-  const salt = await bcrypt.genSalt(12);
-  const passwordHash = await bcrypt.hash(password, salt);
-  const userNo = generateUserNo();
-  const result = db.prepare(`
-    INSERT INTO users (user_no, phone, email, password_hash, salt, status, kyc_status)
-    VALUES (?, ?, ?, ?, ?, 1, 0)
-  `).run(userNo, phone || null, email || null, passwordHash, salt);
-  const token = generateToken({ userId: result.lastInsertRowid as number, userNo });
-  verificationCodes.delete(account);
-  if (email) {
-    void sendEmail({
-      to: email,
-      subject: '🎉 注册成功 - VCC虚拟卡系统',
-      html: regSuccessTemplate(userNo, phone || email)
-    }).catch(err => {
-      console.error(`[Email] 注册成功通知发送失败: ${email}`, err);
+  try {
+    const { phone, email, password, code } = req.body;
+
+    console.log('[Register] 开始注册', { hasPhone: !!phone, hasEmail: !!email });
+
+    if (!password || password.length < 6) {
+      return res.json({ code: 400, message: '密码至少6位', timestamp: Date.now() });
+    }
+    if (!phone && !email) {
+      return res.json({ code: 400, message: '请输入手机号或邮箱', timestamp: Date.now() });
+    }
+
+    const account = phone || email;
+    const storedCode = verificationCodes.get(account);
+    if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
+      return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
+    }
+
+    const existing = db.prepare('SELECT id FROM users WHERE phone = ? OR email = ?').get(phone, email);
+    if (existing) {
+      return res.json({ code: 400, message: '该账号已注册', timestamp: Date.now() });
+    }
+
+    const salt = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(password, salt);
+    const userNo = generateUserNo();
+
+    const result = db.prepare(`
+      INSERT INTO users (user_no, phone, email, password_hash, salt, status, kyc_status)
+      VALUES (?, ?, ?, ?, ?, 1, 0)
+    `).run(userNo, phone || null, email || null, passwordHash, salt);
+
+    const token = generateToken({ userId: result.lastInsertRowid as number, userNo });
+    verificationCodes.delete(account);
+
+    console.log('[Register] 注册写库成功', { userNo, userId: result.lastInsertRowid });
+
+    if (email) {
+      void sendEmail({
+        to: email,
+        subject: '🎉 注册成功 - VCC虚拟卡系统',
+        html: regSuccessTemplate(userNo, phone || email)
+      }).catch(err => {
+        console.error(`[Email] 注册成功通知发送失败: ${email}`, err);
+      });
+    }
+
+    return res.json({
+      code: 0,
+      message: '注册成功',
+      data: { token, userNo },
+      timestamp: Date.now()
+    });
+  } catch (err: any) {
+    console.error('[Register] 注册失败', err);
+    return res.status(500).json({
+      code: 500,
+      message: err?.message || '注册失败，请稍后重试',
+      timestamp: Date.now()
     });
   }
-  res.json({ code: 0, message: '注册成功', data: { token, userNo }, timestamp: Date.now() });
 });
 
 router.post('/login', async (req, res: Response<ApiResponse>) => {
@@ -108,37 +134,42 @@ router.post('/login', async (req, res: Response<ApiResponse>) => {
     return res.json({ code: 400, message: '密码错误', timestamp: Date.now() });
   }
   const token = generateToken({ userId: user.id, userNo: user.user_no });
-  res.json({ code: 0, message: '登录成功', data: { token, userNo: user.user_no }, timestamp: Date.now() });
+  return res.json({ code: 0, message: '登录成功', data: { token, userNo: user.user_no }, timestamp: Date.now() });
 });
 
 router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
-  const { account, code, newPassword } = req.body;
-  const storedCode = verificationCodes.get(account);
-  if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
-    return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
+  try {
+    const { account, code, newPassword } = req.body;
+    const storedCode = verificationCodes.get(account);
+    if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
+      return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
+    }
+    const user = db.prepare('SELECT * FROM users WHERE phone = ? OR email = ?').get(account, account) as User | undefined;
+    if (!user) {
+      return res.json({ code: 400, message: '账号不存在', timestamp: Date.now() });
+    }
+    const salt = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+    db.prepare('UPDATE users SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, salt, user.id);
+    verificationCodes.delete(account);
+    if (user.email) {
+      void sendEmail({
+        to: user.email,
+        subject: '🔐 密码重置成功 - VCC虚拟卡系统',
+        html: passwordResetTemplate(code)
+      }).catch(err => {
+        console.error(`[Email] 密码重置成功通知发送失败: ${user.email}`, err);
+      });
+    }
+    return res.json({ code: 0, message: '密码重置成功', timestamp: Date.now() });
+  } catch (err: any) {
+    console.error('[ResetPassword] 密码重置失败', err);
+    return res.status(500).json({ code: 500, message: err?.message || '密码重置失败，请稍后重试', timestamp: Date.now() });
   }
-  const user = db.prepare('SELECT * FROM users WHERE phone = ? OR email = ?').get(account, account) as User | undefined;
-  if (!user) {
-    return res.json({ code: 400, message: '账号不存在', timestamp: Date.now() });
-  }
-  const salt = await bcrypt.genSalt(12);
-  const passwordHash = await bcrypt.hash(newPassword, salt);
-  db.prepare('UPDATE users SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, salt, user.id);
-  verificationCodes.delete(account);
-  if (user.email) {
-    void sendEmail({
-      to: user.email,
-      subject: '🔐 密码重置成功 - VCC虚拟卡系统',
-      html: passwordResetTemplate(code)
-    }).catch(err => {
-      console.error(`[Email] 密码重置成功通知发送失败: ${user.email}`, err);
-    });
-  }
-  res.json({ code: 0, message: '密码重置成功', timestamp: Date.now() });
 });
 
 router.post('/logout', authMiddleware, (req, res: Response<ApiResponse>) => {
-  res.json({ code: 0, message: '退出成功', timestamp: Date.now() });
+  return res.json({ code: 0, message: '退出成功', timestamp: Date.now() });
 });
 
 router.get('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
@@ -149,11 +180,11 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>)
   if (!user) {
     return res.json({ code: 404, message: '用户不存在', timestamp: Date.now() });
   }
-  res.json({ code: 0, message: 'success', data: user, timestamp: Date.now() });
+  return res.json({ code: 0, message: 'success', data: user, timestamp: Date.now() });
 });
 
 router.put('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
-  res.json({ code: 0, message: '更新成功', timestamp: Date.now() });
+  return res.json({ code: 0, message: '更新成功', timestamp: Date.now() });
 });
 
 export default router;
