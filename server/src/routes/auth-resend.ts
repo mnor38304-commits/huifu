@@ -4,10 +4,9 @@ import db from '../db';
 import { authMiddleware, generateToken, AuthRequest } from '../middleware/auth';
 import { ApiResponse, User } from '../types';
 import { sendEmail, verificationCodeTemplate, regSuccessTemplate, passwordResetTemplate } from '../mailer';
+import { saveVerificationCode, getVerificationCode, deleteVerificationCode, cleanupExpiredVerificationCodes, VerificationChannel } from '../verification-code-store';
 
 const router = Router();
-
-const verificationCodes = new Map<string, { code: string; expires: number }>();
 
 function generateUserNo(): string {
   const date = new Date();
@@ -16,13 +15,18 @@ function generateUserNo(): string {
   return `${prefix}${suffix}`;
 }
 
+function getChannelByAccount(account?: string): VerificationChannel {
+  return account && account.includes('@') ? 'email' : 'phone'
+}
+
 router.post('/send-sms', (req, res: Response<ApiResponse>) => {
   const { phone } = req.body;
   if (!phone) {
     return res.json({ code: 400, message: '请输入手机号', timestamp: Date.now() });
   }
+
   const code = String(Math.floor(100000 + Math.random() * 900000));
-  verificationCodes.set(phone, { code, expires: Date.now() + 10 * 60 * 1000 });
+  saveVerificationCode(phone, 'phone', code, 10 * 60 * 1000);
   console.log(`[SMS] 验证码已发送至 ${phone}: ${code}`);
   return res.json({ code: 0, message: '验证码已发送', data: { mockCode: code }, timestamp: Date.now() });
 });
@@ -32,6 +36,7 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
   if (!email) {
     return res.json({ code: 400, message: '请输入邮箱', timestamp: Date.now() });
   }
+
   const code = String(Math.floor(100000 + Math.random() * 900000));
   try {
     await sendEmail({
@@ -39,7 +44,7 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
       subject: 'VCC虚拟卡系统 - 邮箱验证码',
       html: verificationCodeTemplate(code)
     });
-    verificationCodes.set(email, { code, expires: Date.now() + 5 * 60 * 1000 });
+    saveVerificationCode(email, 'email', code, 5 * 60 * 1000);
     return res.json({ code: 0, message: '验证码已发送至邮箱', timestamp: Date.now() });
   } catch (err: any) {
     console.error(`[Email] 验证码发送失败: ${email}`, err);
@@ -58,6 +63,7 @@ router.post('/register', async (req, res: Response<ApiResponse>) => {
     const { phone, email, password, code } = req.body;
 
     console.log('[Register] 开始注册', { hasPhone: !!phone, hasEmail: !!email });
+    cleanupExpiredVerificationCodes();
 
     if (!password || password.length < 6) {
       return res.json({ code: 400, message: '密码至少6位', timestamp: Date.now() });
@@ -67,8 +73,9 @@ router.post('/register', async (req, res: Response<ApiResponse>) => {
     }
 
     const account = phone || email;
-    const storedCode = verificationCodes.get(account);
-    if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
+    const channel = getChannelByAccount(account);
+    const storedCode = getVerificationCode(account, channel);
+    if (!storedCode || storedCode.code !== code || storedCode.expires_at < Date.now()) {
       return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
     }
 
@@ -87,7 +94,7 @@ router.post('/register', async (req, res: Response<ApiResponse>) => {
     `).run(userNo, phone || null, email || null, passwordHash, salt);
 
     const token = generateToken({ userId: result.lastInsertRowid as number, userNo });
-    verificationCodes.delete(account);
+    deleteVerificationCode(account, channel);
 
     console.log('[Register] 注册写库成功', { userNo, userId: result.lastInsertRowid });
 
@@ -140,8 +147,10 @@ router.post('/login', async (req, res: Response<ApiResponse>) => {
 router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
   try {
     const { account, code, newPassword } = req.body;
-    const storedCode = verificationCodes.get(account);
-    if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
+    cleanupExpiredVerificationCodes();
+    const channel = getChannelByAccount(account);
+    const storedCode = getVerificationCode(account, channel);
+    if (!storedCode || storedCode.code !== code || storedCode.expires_at < Date.now()) {
       return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
     }
     const user = db.prepare('SELECT * FROM users WHERE phone = ? OR email = ?').get(account, account) as User | undefined;
@@ -151,7 +160,7 @@ router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
     const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(newPassword, salt);
     db.prepare('UPDATE users SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, salt, user.id);
-    verificationCodes.delete(account);
+    deleteVerificationCode(account, channel);
     if (user.email) {
       void sendEmail({
         to: user.email,
