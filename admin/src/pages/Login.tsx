@@ -48,9 +48,7 @@ export default function Login({ onLogin }: { onLogin: (a: any) => void }) {
             </Button>
           </Form.Item>
         </Form>
-        <div style={{ textAlign: 'center', color: '#999', fontSize: 12, marginTop: 16 }}>
-          默认账号: <strong>admin</strong> &nbsp;密码: <strong>Admin@2026</strong>
-        </div>
+
       </Card>
     </div>
   )

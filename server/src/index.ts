@@ -55,15 +55,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function start() {
   await initDatabase();
 
-  // 初始化默认超级管理员
-  const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
-  if (adminCount === 0) {
-    const salt = await bcrypt.genSalt(12);
-    const hash = await bcrypt.hash('Admin@2026', salt);
-    db.prepare(`INSERT INTO admins (username,password_hash,salt,real_name,role,status) VALUES (?,?,?,?,?,1)`)
-      .run('admin', hash, salt, '超级管理员', 'super');
-    console.log('✅ Default admin created: admin / Admin@2026');
-  }
+
 
   // 初始化默认 BIN
   const binCount = (db.prepare('SELECT COUNT(*) as c FROM card_bins').get() as any).c;
