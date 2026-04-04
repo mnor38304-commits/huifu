@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db';
 import { adminAuth } from './admin-auth';
+import { getMerchantBinPermissionData, saveMerchantBinAssignments } from '../merchant-bin-access';
 
 const router = Router();
 
@@ -40,10 +41,39 @@ router.get('/:id', adminAuth, (req, res) => {
   try {
     const user = db.prepare('SELECT id,user_no,phone,email,status,kyc_status,created_at FROM users WHERE id=?').get(req.params.id);
     if (!user) return res.json({ code: 404, message: '用户不存在' });
-    const cards = db.prepare('SELECT id,card_no_masked,card_name,card_type,balance,status,created_at FROM cards WHERE user_id=?').all(req.params.id);
+    const cards = db.prepare('SELECT id,card_no_masked,card_name,card_type,balance,status,created_at,bin_id FROM cards WHERE user_id=?').all(req.params.id);
     const kyc = db.prepare('SELECT * FROM kyc_records WHERE user_id=? ORDER BY id DESC LIMIT 1').get(req.params.id);
     const txnStats = db.prepare('SELECT COUNT(*) as count, COALESCE(SUM(ABS(amount)),0) as volume FROM transactions WHERE user_id=? AND status=1').get(req.params.id);
-    res.json({ code: 0, data: { user, cards, kyc, txnStats }, timestamp: Date.now() });
+    const binPermissions = getMerchantBinPermissionData(Number(req.params.id));
+    res.json({ code: 0, data: { user, cards, kyc, txnStats, binPermissions }, timestamp: Date.now() });
+  } catch (err: any) {
+    res.json({ code: 500, message: err.message, timestamp: Date.now() });
+  }
+});
+
+router.get('/:id/bin-permissions', adminAuth, (req, res) => {
+  try {
+    const user = db.prepare('SELECT id FROM users WHERE id=?').get(req.params.id);
+    if (!user) return res.json({ code: 404, message: '用户不存在', timestamp: Date.now() });
+    const data = getMerchantBinPermissionData(Number(req.params.id));
+    res.json({ code: 0, data, timestamp: Date.now() });
+  } catch (err: any) {
+    res.json({ code: 500, message: err.message, timestamp: Date.now() });
+  }
+});
+
+router.post('/:id/bin-permissions', adminAuth, (req: any, res) => {
+  try {
+    const user = db.prepare('SELECT id FROM users WHERE id=?').get(req.params.id);
+    if (!user) return res.json({ code: 404, message: '用户不存在', timestamp: Date.now() });
+    const { binIds } = req.body || {};
+    const result = saveMerchantBinAssignments(Number(req.params.id), Array.isArray(binIds) ? binIds : []);
+    res.json({
+      code: 0,
+      message: result.assigned > 0 ? '商户可开通卡段已更新' : '已恢复为默认全部启用卡段可开通',
+      data: result,
+      timestamp: Date.now()
+    });
   } catch (err: any) {
     res.json({ code: 500, message: err.message, timestamp: Date.now() });
   }
