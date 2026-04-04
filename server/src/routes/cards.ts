@@ -39,20 +39,23 @@ function generateExpireDate(): string {
 router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   try {
     const sdk = await getDogPaySDK();
-    let bins = getMerchantOpenableBins(req.user!.userId)
+    let bins = getMerchantOpenableBins(req.user!.userId);
+
     if (sdk) {
-      bins = bins.filter((bin: any) => !!bin.external_bin_id)
+      bins = bins.filter((bin: any) => !!bin.external_bin_id);
     }
-    return res.json({ code: 0, message: 'success', data: bins, timestamp: Date.now() })
+
+    return res.json({ code: 0, message: 'success', data: bins, timestamp: Date.now() });
   } catch (err: any) {
-    return res.json({ code: 500, message: err.message, timestamp: Date.now() })
+    console.error('Available bins error:', err.message);
+    return res.json({ code: 500, message: err.message, timestamp: Date.now() });
   }
-})
+});
 
 router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   const { status } = req.query;
 
-  let sql = 'SELECT id, card_no_masked, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, purpose, created_at FROM cards WHERE user_id = ?';
+  let sql = 'SELECT id, card_no_masked, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, purpose, created_at, bin_id FROM cards WHERE user_id = ?';
   const params: any[] = [req.user!.userId];
 
   if (status) {
@@ -87,31 +90,33 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   let selectedBinCode: string | null = null;
 
   const sdk = await getDogPaySDK();
-  let allowedBins = getMerchantOpenableBins(req.user!.userId)
+
+  let allowedBins = getMerchantOpenableBins(req.user!.userId);
   if (sdk) {
-    allowedBins = allowedBins.filter((bin: any) => !!bin.external_bin_id)
+    allowedBins = allowedBins.filter((bin: any) => !!bin.external_bin_id);
   }
+
   const selectedBin = binId
     ? allowedBins.find((bin: any) => Number(bin.id) === Number(binId))
-    : allowedBins[0]
+    : allowedBins[0];
 
   if (allowedBins.length === 0) {
-    return res.json({ code: 400, message: '当前商户未配置可开通卡段，请联系管理员', timestamp: Date.now() })
+    return res.json({ code: 400, message: '当前商户未配置可开通卡段，请联系管理员', timestamp: Date.now() });
   }
 
   if (!selectedBin) {
-    return res.json({ code: 400, message: '所选卡段未开通或不可用', timestamp: Date.now() })
+    return res.json({ code: 400, message: '所选卡段未开通或不可用', timestamp: Date.now() });
   }
 
-  selectedBinId = Number(selectedBin.id)
-  selectedBinCode = String(selectedBin.bin_code || '')
+  selectedBinId = Number(selectedBin.id);
+  selectedBinCode = String(selectedBin.bin_code || '');
 
   if (sdk) {
     try {
       const dogpayRes = await sdk.createCard({
         cardType: cardType === 'physical' ? 'physical' : 'virtual',
         cardName,
-        channelId: selectedBin.external_bin_id,
+        channelId: selectedBin.external_bin_id
       });
 
       if (dogpayRes && dogpayRes.data) {
@@ -139,7 +144,21 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   const result = db.prepare(`
     INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, cvv, purpose, external_id)
     VALUES (?, ?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?, ?)
-  `).run(cardNo, masked, req.user!.userId, selectedBinId, cardName, cardType, creditLimit, singleLimit || null, dailyLimit || null, expireDate, cvv, purpose || null, externalId || null);
+  `).run(
+    cardNo,
+    masked,
+    req.user!.userId,
+    selectedBinId,
+    cardName,
+    cardType,
+    creditLimit,
+    singleLimit || null,
+    dailyLimit || null,
+    expireDate,
+    cvv,
+    purpose || null,
+    externalId || null
+  );
 
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
 
