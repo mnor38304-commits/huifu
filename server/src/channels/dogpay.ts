@@ -37,27 +37,32 @@ export class DogPaySDK {
     throw new Error('Failed to get DogPay access token');
   }
 
-  private async request(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, data?: any) {
-    const token = await this.getAccessToken();
-    const url = `${this.config.apiBaseUrl}${path}`;
-    
-    try {
-      const response = await axios({
-        method,
-        url,
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        data
-      });
-      return response.data;
-    } catch (error: any) {
-      console.error(`DogPay API Error [${method} ${path}]:`, error.response?.data || error.message);
-      throw error;
-    }
+ private async request(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  options?: { data?: any; params?: any }
+) {
+  const token = await this.getAccessToken();
+  const url = `${this.config.apiBaseUrl}${path}`;
+
+  try {
+    const response = await axios({
+      method,
+      url,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      params: options?.params,
+      data: options?.data,
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error(`DogPay API Error [${method} ${path}]:`, error.response?.data || error.message);
+    throw error;
   }
+}
 
   // 获取主账户余额
   async getMasterBalance() {
@@ -76,8 +81,8 @@ export class DogPaySDK {
 
   // 获取卡片列表
   async getCardList(params?: any) {
-    return this.request('GET', '/open-api/v1/cards', { params });
-  }
+  return this.request('GET', '/open-api/v1/cards', { params });
+}
 
   // 获取卡片详情
   async getCardDetail(cardId: string) {
