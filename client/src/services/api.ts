@@ -26,6 +26,7 @@ export const login = (account: string, password: string) => api.post('/auth/logi
 export const logout = () => api.post('/auth/logout')
 export const getUserInfo = () => api.get('/auth/me')
 export const getCards = (status?: number) => api.get('/cards', { params: { status } })
+export const getAvailableCardBins = () => api.get('/cards/bins/available')
 export const createCard = (data: any) => api.post('/cards', data)
 export const getCardDetail = (id: number) => api.get(`/cards/${id}`)
 export const revealCard = (id: number) => api.get(`/cards/${id}/reveal`)
