@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Space, Card, Modal, Form, Input, InputNumber, Select, message, Tooltip, Divider } from 'antd'
+import { Table, Button, Tag, Card, Modal, Form, Input, InputNumber, Select, message, Tooltip, Divider } from 'antd'
 import { PlusOutlined, EditOutlined, InfoCircleOutlined } from '@ant-design/icons'
-import { getBins, createBin, updateBin } from '../api'
+import { getBins, createBin, updateBin, bulkUpdateBinRates } from '../api'
 
 const { Option } = Select
 
@@ -23,8 +23,12 @@ export default function CardBins() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
+  const [batchVisible, setBatchVisible] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [editRecord, setEditRecord] = useState<any>(null)
   const [form] = Form.useForm()
+  const [batchForm] = Form.useForm()
 
   useEffect(() => { load() }, [])
 
@@ -51,13 +55,43 @@ export default function CardBins() {
   }
 
   const onSubmit = async (values: any) => {
-    // 费率字段转换 % -> 小数
     const data = { ...values, topupFeeRate: values.topupFeeRate/100, crossBorderFeeRate: values.crossBorderFeeRate/100, refundFeeRate: values.refundFeeRate/100 }
     try {
       const r: any = editRecord ? await updateBin(editRecord.id, data) : await createBin(data)
       if (r.code === 0) { message.success(editRecord ? '更新成功' : '创建成功'); setModalVisible(false); load() }
       else message.error(r.message)
     } catch (e: any) { message.error(e.response?.data?.message || '操作失败') }
+  }
+
+  const openBatch = () => {
+    if (!selectedRowKeys.length) return message.warning('请先选择BIN')
+    batchForm.resetFields()
+    setBatchVisible(true)
+  }
+
+  const onBatchSubmit = async (values: any) => {
+    const data: any = {}
+    feeFields.forEach((f) => {
+      const v = values[f.name]
+      if (v !== undefined && v !== null && v !== '') {
+        data[f.name] = f.isRate ? v / 100 : v
+      }
+    })
+    if (!Object.keys(data).length) return message.warning('请至少填写一个费率字段')
+    setSubmitting(true)
+    try {
+      const r: any = await bulkUpdateBinRates(selectedRowKeys, data)
+      if (r.code === 0) {
+        message.success('批量费率设置成功')
+        setBatchVisible(false)
+        setSelectedRowKeys([])
+        load()
+      } else message.error(r.message)
+    } catch (e: any) {
+      message.error(e.response?.data?.message || '批量设置失败')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const cols = [
@@ -72,8 +106,7 @@ export default function CardBins() {
     { title: '月费', dataIndex: 'monthly_fee', key: 'monthly_fee', width: 80, render: (v: number) => `$${v}` },
     { title: '卡片数', dataIndex: 'card_count', key: 'card_count', width: 80 },
     { title: '状态', dataIndex: 'status', key: 'status', width: 80, render: (v: number) => <Tag color={v===1?'green':'default'}>{v===1?'启用':'禁用'}</Tag> },
-    { title: '操作', key: 'action', fixed: 'right' as const, width: 80,
-      render: (_: any, r: any) => <Button type="link" size="small" onClick={() => openEdit(r)}><EditOutlined /> 编辑</Button> }
+    { title: '操作', key: 'action', fixed: 'right' as const, width: 80, render: (_: any, r: any) => <Button type="link" size="small" onClick={() => openEdit(r)}><EditOutlined /> 编辑</Button> }
   ]
 
   return (
@@ -84,43 +117,43 @@ export default function CardBins() {
             <span style={{ fontSize: 16, fontWeight: 600 }}>卡 BIN 费率管理</span>
             <span style={{ color: '#999', fontSize: 13, marginLeft: 8 }}>共 {total} 个BIN</span>
           </div>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增BIN</Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={openBatch} disabled={!selectedRowKeys.length}>批量费率设置</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增BIN</Button>
+          </div>
         </div>
-        <Table columns={cols} dataSource={list} rowKey="id" loading={loading} scroll={{ x: 1200 }} pagination={false} />
+        <Table rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }} columns={cols} dataSource={list} rowKey="id" loading={loading} scroll={{ x: 1200 }} pagination={false} />
       </Card>
 
-      <Modal title={editRecord ? '编辑BIN费率' : '新增BIN'} open={modalVisible} onCancel={() => setModalVisible(false)}
-        onOk={() => form.submit()} width={700} okText={editRecord ? '保存' : '创建'}>
+      <Modal title={editRecord ? '编辑BIN费率' : '新增BIN'} open={modalVisible} onCancel={() => setModalVisible(false)} onOk={() => form.submit()} width={700} okText={editRecord ? '保存' : '创建'}>
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Divider orientation="left" plain>基本信息</Divider>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-            <Form.Item name="binCode" label="BIN码" rules={[{ required: true }]}>
-              <Input placeholder="如: 411111" disabled={!!editRecord} />
-            </Form.Item>
-            <Form.Item name="binName" label="BIN名称" rules={[{ required: true }]}>
-              <Input placeholder="如: Visa Standard USD" />
-            </Form.Item>
-            <Form.Item name="cardBrand" label="卡品牌" initialValue="VISA">
-              <Select><Option value="VISA">VISA</Option><Option value="MC">Mastercard</Option></Select>
-            </Form.Item>
-            <Form.Item name="issuer" label="发卡机构">
-              <Input placeholder="发卡银行名称" />
-            </Form.Item>
-            <Form.Item name="currency" label="币种" initialValue="USD">
-              <Select><Option value="USD">USD</Option><Option value="EUR">EUR</Option><Option value="GBP">GBP</Option></Select>
-            </Form.Item>
-            <Form.Item name="status" label="状态" initialValue={1}>
-              <Select><Option value={1}>启用</Option><Option value={0}>禁用</Option></Select>
-            </Form.Item>
+            <Form.Item name="binCode" label="BIN码" rules={[{ required: true }]}><Input placeholder="如: 411111" disabled={!!editRecord} /></Form.Item>
+            <Form.Item name="binName" label="BIN名称" rules={[{ required: true }]}><Input placeholder="如: Visa Standard USD" /></Form.Item>
+            <Form.Item name="cardBrand" label="卡品牌" initialValue="VISA"><Select><Option value="VISA">VISA</Option><Option value="MC">Mastercard</Option></Select></Form.Item>
+            <Form.Item name="issuer" label="发卡机构"><Input placeholder="发卡银行名称" /></Form.Item>
+            <Form.Item name="currency" label="币种" initialValue="USD"><Select><Option value="USD">USD</Option><Option value="EUR">EUR</Option><Option value="GBP">GBP</Option></Select></Form.Item>
+            <Form.Item name="status" label="状态" initialValue={1}><Select><Option value={1}>启用</Option><Option value={0}>禁用</Option></Select></Form.Item>
           </div>
-
           <Divider orientation="left" plain>费率配置</Divider>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
             {feeFields.map(f => (
-              <Form.Item key={f.name} name={f.name} initialValue={0}
-                label={<span>{f.label} <Tooltip title={f.tip}><InfoCircleOutlined style={{ color: '#999' }} /></Tooltip></span>}>
-                <InputNumber min={0} max={f.isRate ? 100 : undefined} step={f.isRate ? 0.1 : 0.01}
-                  addonAfter={f.unit} style={{ width: '100%' }} />
+              <Form.Item key={f.name} name={f.name} initialValue={0} label={<span>{f.label} <Tooltip title={f.tip}><InfoCircleOutlined style={{ color: '#999' }} /></Tooltip></span>}>
+                <InputNumber min={0} max={f.isRate ? 100 : undefined} step={f.isRate ? 0.1 : 0.01} addonAfter={f.unit} style={{ width: '100%' }} />
+              </Form.Item>
+            ))}
+          </div>
+        </Form>
+      </Modal>
+
+      <Modal title={`批量设置费率（已选 ${selectedRowKeys.length} 个BIN）`} open={batchVisible} onCancel={() => setBatchVisible(false)} onOk={() => batchForm.submit()} okButtonProps={{ loading: submitting }} width={700} okText="应用到所选BIN">
+        <Form form={batchForm} layout="vertical" onFinish={onBatchSubmit}>
+          <div style={{ marginBottom: 12, color: '#999' }}>只会更新你填写的字段，留空字段保持原值不变。</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+            {feeFields.map(f => (
+              <Form.Item key={f.name} name={f.name} label={<span>{f.label} <Tooltip title={f.tip}><InfoCircleOutlined style={{ color: '#999' }} /></Tooltip></span>}>
+                <InputNumber min={0} max={f.isRate ? 100 : undefined} step={f.isRate ? 0.1 : 0.01} addonAfter={f.unit} style={{ width: '100%' }} placeholder="留空则不修改" />
               </Form.Item>
             ))}
           </div>
