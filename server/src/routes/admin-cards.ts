@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import db from '../db';
 import { adminAuth } from './admin-auth';
+import { DogPaySDK } from '../channels/dogpay';
+import { syncDogPayBins } from '../dogpay-bin-store';
 
 const router = Router();
 
-// BIN 列表
 router.get('/bins', adminAuth, (req, res) => {
   try {
     const { page = 1, pageSize = 20, status } = req.query;
@@ -22,7 +23,6 @@ router.get('/bins', adminAuth, (req, res) => {
   }
 });
 
-// 创建 BIN
 router.post('/bins', adminAuth, (req: any, res) => {
   try {
     const { binCode, binName, cardBrand, issuer, currency, country,
@@ -37,7 +37,6 @@ router.post('/bins', adminAuth, (req: any, res) => {
   }
 });
 
-// 更新 BIN
 router.put('/bins/:id', adminAuth, (req: any, res) => {
   try {
     const { binName, cardBrand, issuer, currency, country, status,
@@ -51,7 +50,59 @@ router.put('/bins/:id', adminAuth, (req: any, res) => {
   }
 });
 
-// 卡片列表
+router.post('/bins/batch-rates', adminAuth, (req: any, res) => {
+  try {
+    const { ids, rates } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.json({ code: 400, message: '请选择至少一个BIN', timestamp: Date.now() });
+    }
+    const allowedMap: Record<string, string> = {
+      openFee: 'open_fee',
+      topupFeeRate: 'topup_fee_rate',
+      topupFeeMin: 'topup_fee_min',
+      crossBorderFeeRate: 'cross_border_fee_rate',
+      smallTxnThreshold: 'small_txn_threshold',
+      smallTxnFee: 'small_txn_fee',
+      declineFee: 'decline_fee',
+      authFee: 'auth_fee',
+      refundFeeRate: 'refund_fee_rate',
+      monthlyFee: 'monthly_fee',
+    };
+    const setClauses: string[] = [];
+    const params: any[] = [];
+    Object.keys(allowedMap).forEach((key) => {
+      if (rates && rates[key] !== undefined && rates[key] !== null && rates[key] !== '') {
+        setClauses.push(`${allowedMap[key]} = ?`);
+        params.push(Number(rates[key]));
+      }
+    });
+    if (!setClauses.length) {
+      return res.json({ code: 400, message: '请至少填写一个费率字段', timestamp: Date.now() });
+    }
+    setClauses.push('updated_at = CURRENT_TIMESTAMP');
+    const placeholders = ids.map(() => '?').join(',');
+    params.push(...ids.map((id: any) => Number(id)));
+    db.prepare(`UPDATE card_bins SET ${setClauses.join(', ')} WHERE id IN (${placeholders})`).run(...params);
+    return res.json({ code: 0, message: '批量费率更新成功', data: { updated: ids.length }, timestamp: Date.now() });
+  } catch (err: any) {
+    return res.json({ code: 500, message: err.message, timestamp: Date.now() });
+  }
+});
+
+router.post('/channels/dogpay/sync-bins', adminAuth, async (req: any, res) => {
+  try {
+    const channel = db.prepare("SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1").get() as any;
+    if (!channel) {
+      return res.json({ code: 400, message: 'DogPay 渠道未配置或未启用', timestamp: Date.now() });
+    }
+    const sdk = new DogPaySDK({ appId: channel.api_key, appSecret: channel.api_secret, apiBaseUrl: channel.api_base_url });
+    const result = await syncDogPayBins(sdk);
+    return res.json({ code: 0, message: 'DogPay BIN 同步成功', data: result, timestamp: Date.now() });
+  } catch (err: any) {
+    return res.json({ code: 500, message: err.message, timestamp: Date.now() });
+  }
+});
+
 router.get('/cards', adminAuth, (req, res) => {
   try {
     const { page = 1, pageSize = 20, keyword, status, userId } = req.query;
@@ -71,7 +122,6 @@ router.get('/cards', adminAuth, (req, res) => {
   }
 });
 
-// 冻结/解冻卡片
 router.post('/cards/:id/status', adminAuth, (req: any, res) => {
   try {
     const { status, reason } = req.body;
@@ -82,7 +132,6 @@ router.post('/cards/:id/status', adminAuth, (req: any, res) => {
   }
 });
 
-// 渠道列表
 router.get('/channels', adminAuth, (req, res) => {
   try {
     const list = db.prepare('SELECT id,channel_code,channel_name,api_base_url,status,created_at FROM card_channels').all();
@@ -92,7 +141,6 @@ router.get('/channels', adminAuth, (req, res) => {
   }
 });
 
-// 创建渠道
 router.post('/channels', adminAuth, (req: any, res) => {
   try {
     const { channelCode, channelName, apiBaseUrl, apiKey, apiSecret, webhookSecret, configJson } = req.body;
@@ -104,7 +152,6 @@ router.post('/channels', adminAuth, (req: any, res) => {
   }
 });
 
-// 更新渠道
 router.put('/channels/:id', adminAuth, (req: any, res) => {
   try {
     const { channelName, apiBaseUrl, apiKey, apiSecret, webhookSecret, status, configJson } = req.body;
@@ -116,4 +163,4 @@ router.put('/channels/:id', adminAuth, (req: any, res) => {
   }
 });
 
-export default router;
+export default router

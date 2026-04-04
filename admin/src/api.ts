@@ -26,6 +26,7 @@ export const auditKyc = (id, a, r) => BASE.post(`/merchants/kyc/${id}/audit`, { 
 export const getBins = p => BASE.get('/cards/bins', { params: p })
 export const createBin = d => BASE.post('/cards/bins', d)
 export const updateBin = (id, d) => BASE.put(`/cards/bins/${id}`, d)
+export const bulkUpdateBinRates = (ids, rates) => BASE.post('/cards/bins/batch-rates', { ids, rates })
 export const getCards = p => BASE.get('/cards/cards', { params: p })
 export const setCardStatus = (id, s, r) => BASE.post(`/cards/cards/${id}/status`, { status: s, reason: r })
 export const getChannels = () => BASE.get('/cards/channels')
