@@ -21,48 +21,50 @@ export class DogPaySDK {
       return this.accessToken;
     }
 
-    const response = await axios.post(`${this.config.apiBaseUrl}/open-api/v1/auth/access_token`, {
-      grant_type: 'client_credential',
-      appid: this.config.appId,
-      secret: this.config.appSecret
-    });
+    const response = await axios.post(
+      `${this.config.apiBaseUrl}/open-api/v1/auth/access_token`,
+      {
+        grant_type: 'client_credential',
+        appid: this.config.appId,
+        secret: this.config.appSecret
+      }
+    );
 
-    if (response.data && response.data.data) {
+    if (response.data?.data?.access_token) {
       this.accessToken = response.data.data.access_token;
-      // 默认有效期 7200 秒，提前 5 分钟过期
-      this.tokenExpiresAt = now + (response.data.data.expires_in - 300) * 1000;
-      return this.accessToken!;
+      this.tokenExpiresAt = now + ((response.data.data.expires_in || 7200) - 300) * 1000;
+      return this.accessToken;
     }
 
     throw new Error('Failed to get DogPay access token');
   }
 
- private async request(
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  path: string,
-  options?: { data?: any; params?: any }
-) {
-  const token = await this.getAccessToken();
-  const url = `${this.config.apiBaseUrl}${path}`;
+  private async request(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    options?: { data?: any; params?: any }
+  ) {
+    const token = await this.getAccessToken();
+    const url = `${this.config.apiBaseUrl}${path}`;
 
-  try {
-    const response = await axios({
-      method,
-      url,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      params: options?.params,
-      data: options?.data,
-    });
-    return response.data;
-  } catch (error: any) {
-    console.error(`DogPay API Error [${method} ${path}]:`, error.response?.data || error.message);
-    throw error;
+    try {
+      const response = await axios({
+        method,
+        url,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        params: options?.params,
+        data: options?.data,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error(`DogPay API Error [${method} ${path}]:`, error.response?.data || error.message);
+      throw error;
+    }
   }
-}
 
   // 获取主账户余额
   async getMasterBalance() {
@@ -76,13 +78,18 @@ export class DogPaySDK {
     channelId?: string;
     budgetId?: string;
   }) {
-    return this.request('POST', '/open-api/v1/cards', params);
+    return this.request('POST', '/open-api/v1/cards', { data: params });
   }
 
   // 获取卡片列表
   async getCardList(params?: any) {
-  return this.request('GET', '/open-api/v1/cards', { params });
-}
+    return this.request('GET', '/open-api/v1/cards', { params });
+  }
+
+  // 获取可用卡 BIN
+  async getCardBins(params?: any) {
+    return this.request('GET', '/open-api/v1/cards/bins', { params });
+  }
 
   // 获取卡片详情
   async getCardDetail(cardId: string) {
