@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react'
 import dayjs from 'dayjs'
-import { Card, Descriptions, Button, Modal, Form, Input, Select, message, Spin, Tag, List, DatePicker, Alert, Checkbox } from 'antd'
+import { Card, Descriptions, Button, Modal, Form, Input, Select, message, Spin, Tag, List, DatePicker, Alert, Checkbox, Typography } from 'antd'
 import { getUserInfo, getKycStatus, submitKyc } from '../services/api'
+import { policyDocs, type PolicyDoc } from '../constants/policyDocs'
 
 const { Option } = Select
+const { Title, Paragraph, Text } = Typography
 
 const Settings: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState<any>(null)
   const [kycStatus, setKycStatus] = useState<any>({})
   const [kycModalVisible, setKycModalVisible] = useState(false)
+  const [policyModalVisible, setPolicyModalVisible] = useState(false)
+  const [activePolicy, setActivePolicy] = useState<PolicyDoc | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
 
@@ -46,6 +50,12 @@ const Settings: React.FC = () => {
       agreement: false,
     })
     setKycModalVisible(true)
+  }
+
+  const openPolicy = (key: string) => {
+    const target = policyDocs.find(item => item.key === key) || null
+    setActivePolicy(target)
+    setPolicyModalVisible(true)
   }
 
   const handleKycSubmit = async (values: any) => {
@@ -90,12 +100,7 @@ const Settings: React.FC = () => {
     3: '营业执照',
   }
 
-  const protocols = [
-    { name: '虚拟卡服务协议', date: '2026-01-01' },
-    { name: '用户注册协议', date: '2026-01-01' },
-    { name: '隐私政策', date: '2026-01-01' },
-    { name: '费率说明', date: '2026-01-01' },
-  ]
+  const protocols = policyDocs.map(item => ({ key: item.key, name: item.name, date: item.date }))
 
   const canSubmitKyc = kycStatus.kycStatus === 0 || kycStatus.kycStatus === 3 || kycStatus.kycStatus === undefined
   const entityNameLabel = subjectType === 2 ? '企业名称' : '真实姓名'
@@ -128,6 +133,7 @@ const Settings: React.FC = () => {
 
       <Card
         title="实名认证信息"
+        style={{ marginBottom: 16 }}
         extra={
           canSubmitKyc ? (
             <Button type="primary" onClick={handleOpenKycModal}>
@@ -175,7 +181,7 @@ const Settings: React.FC = () => {
               <div>{item.name}</div>
               <div>
                 <span style={{ color: '#999', marginRight: 16 }}>{item.date}</span>
-                <Button type="link" size="small">查看</Button>
+                <Button type="link" size="small" onClick={() => openPolicy(item.key)}>查看</Button>
               </div>
             </List.Item>
           )}
@@ -241,6 +247,34 @@ const Settings: React.FC = () => {
             </Button>
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={activePolicy?.name || '协议详情'}
+        open={policyModalVisible}
+        onCancel={() => setPolicyModalVisible(false)}
+        footer={<Button type="primary" onClick={() => setPolicyModalVisible(false)}>我已阅读</Button>}
+        width={820}
+      >
+        {activePolicy && (
+          <div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 8 }}>
+            <Typography>
+              <Paragraph>
+                <Text type="secondary">生效日期：{activePolicy.date}</Text>
+              </Paragraph>
+              {activePolicy.sections.map(section => (
+                <div key={section.title} style={{ marginBottom: 20 }}>
+                  <Title level={5}>{section.title}</Title>
+                  {section.paragraphs.map((paragraph, index) => (
+                    <Paragraph key={`${section.title}-${index}`} style={{ marginBottom: 8 }}>
+                      {paragraph}
+                    </Paragraph>
+                  ))}
+                </div>
+              ))}
+            </Typography>
+          </div>
+        )}
       </Modal>
     </div>
   )
