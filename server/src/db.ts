@@ -81,6 +81,7 @@ export async function initDatabase(): Promise<Database> {
     status INTEGER DEFAULT 1,  -- 1正常 2冻结 3过期 4注销 0待激活
     expire_date DATE NOT NULL, cvv VARCHAR(10) NOT NULL,
     purpose VARCHAR(100),
+    external_id VARCHAR(100),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),

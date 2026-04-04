@@ -4,8 +4,20 @@ import db from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ApiResponse, Card } from '../types';
 import { sendEmail, cardOpenedTemplate, topupSuccessTemplate } from '../mail';
+import { DogPaySDK } from '../channels/dogpay';
 
 const router = Router();
+
+// 获取 DogPay SDK 实例
+async function getDogPaySDK() {
+  const channel = db.prepare("SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1").get() as any;
+  if (!channel) return null;
+  return new DogPaySDK({
+    appId: channel.api_key,
+    appSecret: channel.api_secret,
+    apiBaseUrl: channel.api_base_url
+  });
+}
 
 // 生成卡号
 function generateCardNo(): { cardNo: string; masked: string } {
@@ -59,14 +71,48 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     return res.json({ code: 400, message: '额度范围: $10 - $10,000', timestamp: Date.now() });
   }
   
-  const { cardNo, masked } = generateCardNo();
-  const cvv = generateCVV();
-  const expireDate = generateExpireDate();
+  let cardNo = '';
+  let masked = '';
+  let cvv = '';
+  let expireDate = '';
+  let externalId = '';
+
+  const sdk = await getDogPaySDK();
+  if (sdk) {
+    try {
+      // 调用 DogPay 接口开卡
+      const dogpayRes = await sdk.createCard({
+        cardType: cardType === 'physical' ? 'physical' : 'virtual',
+        cardName: cardName
+      });
+      
+      if (dogpayRes && dogpayRes.data) {
+        const cardData = dogpayRes.data;
+        externalId = cardData.id;
+        cardNo = cardData.idNo || ''; // 假设 idNo 是完整卡号，如果接口不返回则需后续 reveal
+        masked = cardData.last4 ? `****${cardData.last4}` : '****';
+        expireDate = cardData.createdAt ? new Date(cardData.createdAt).toISOString().split('T')[0] : generateExpireDate();
+        cvv = '***'; // 初始设为掩码
+      } else {
+        return res.json({ code: 500, message: '渠道开卡失败: ' + (dogpayRes?.message || '未知错误'), timestamp: Date.now() });
+      }
+    } catch (err: any) {
+      console.error('DogPay create card error:', err.message);
+      return res.json({ code: 500, message: '渠道接口调用异常', timestamp: Date.now() });
+    }
+  } else {
+    // 如果没有配置 DogPay 渠道，回退到模拟逻辑
+    const mock = generateCardNo();
+    cardNo = mock.cardNo;
+    masked = mock.masked;
+    cvv = generateCVV();
+    expireDate = generateExpireDate();
+  }
   
   const result = db.prepare(`
-    INSERT INTO cards (card_no, card_no_masked, user_id, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, cvv, purpose)
-    VALUES (?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?)
-  `).run(cardNo, masked, req.user!.userId, cardName, cardType, creditLimit, singleLimit || null, dailyLimit || null, expireDate, cvv, purpose || null);
+    INSERT INTO cards (card_no, card_no_masked, user_id, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, cvv, purpose, external_id)
+    VALUES (?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?, ?)
+  `).run(cardNo, masked, req.user!.userId, cardName, cardType, creditLimit, singleLimit || null, dailyLimit || null, expireDate, cvv, purpose || null, externalId || null);
   
   // 获取用户邮箱
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
@@ -172,11 +218,22 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
 });
 
 // 冻结卡片
-router.post('/:id/freeze', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
-  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId);
+router.post('/:id/freeze', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
   
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  if (card.external_id) {
+    const sdk = await getDogPaySDK();
+    if (sdk) {
+      try {
+        await sdk.freezeCard(card.external_id);
+      } catch (err: any) {
+        return res.json({ code: 500, message: '渠道冻结失败: ' + err.message, timestamp: Date.now() });
+      }
+    }
   }
   
   db.prepare('UPDATE cards SET status = 2, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
@@ -185,11 +242,22 @@ router.post('/:id/freeze', authMiddleware, (req: AuthRequest, res: Response<ApiR
 });
 
 // 解冻卡片
-router.post('/:id/unfreeze', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
-  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId);
+router.post('/:id/unfreeze', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
   
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  if (card.external_id) {
+    const sdk = await getDogPaySDK();
+    if (sdk) {
+      try {
+        await sdk.unfreezeCard(card.external_id);
+      } catch (err: any) {
+        return res.json({ code: 500, message: '渠道解冻失败: ' + err.message, timestamp: Date.now() });
+      }
+    }
   }
   
   db.prepare('UPDATE cards SET status = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
@@ -198,11 +266,22 @@ router.post('/:id/unfreeze', authMiddleware, (req: AuthRequest, res: Response<Ap
 });
 
 // 销卡
-router.post('/:id/cancel', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
-  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as Card | undefined;
+router.post('/:id/cancel', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
   
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  if (card.external_id) {
+    const sdk = await getDogPaySDK();
+    if (sdk) {
+      try {
+        await sdk.deleteCard(card.external_id);
+      } catch (err: any) {
+        return res.json({ code: 500, message: '渠道销卡失败: ' + err.message, timestamp: Date.now() });
+      }
+    }
   }
   
   // 退回余额
