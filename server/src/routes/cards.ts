@@ -4,7 +4,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ApiResponse, Card } from '../types';
 import { sendEmail, cardOpenedTemplate, topupSuccessTemplate } from '../mail';
 import { DogPaySDK } from '../channels/dogpay';
-import { ensureDogPayBinSchema, getAvailableDogPayBins, getDogPayBinById } from '../dogpay-bin-store';
+import { getMerchantOpenableBins } from '../merchant-bin-access';
 
 const router = Router();
 
@@ -38,20 +38,12 @@ function generateExpireDate(): string {
 
 router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   try {
-    ensureDogPayBinSchema();
     const sdk = await getDogPaySDK();
+    let bins = getMerchantOpenableBins(req.user!.userId);
 
     if (sdk) {
-      const dogpayBins = getAvailableDogPayBins();
-      return res.json({ code: 0, message: 'success', data: dogpayBins, timestamp: Date.now() });
+      bins = bins.filter((bin: any) => !!bin.external_bin_id);
     }
-
-    const bins = db.prepare(`
-      SELECT id, bin_code, bin_name, card_brand, issuer, currency, country, status
-      FROM card_bins
-      WHERE status = 1
-      ORDER BY id ASC
-    `).all();
 
     return res.json({ code: 0, message: 'success', data: bins, timestamp: Date.now() });
   } catch (err: any) {
@@ -98,18 +90,29 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   let selectedBinCode: string | null = null;
 
   const sdk = await getDogPaySDK();
+
+  let allowedBins = getMerchantOpenableBins(req.user!.userId);
+  if (sdk) {
+    allowedBins = allowedBins.filter((bin: any) => !!bin.external_bin_id);
+  }
+
+  const selectedBin = binId
+    ? allowedBins.find((bin: any) => Number(bin.id) === Number(binId))
+    : allowedBins[0];
+
+  if (allowedBins.length === 0) {
+    return res.json({ code: 400, message: '当前商户未配置可开通卡段，请联系管理员', timestamp: Date.now() });
+  }
+
+  if (!selectedBin) {
+    return res.json({ code: 400, message: '所选卡段未开通或不可用', timestamp: Date.now() });
+  }
+
+  selectedBinId = Number(selectedBin.id);
+  selectedBinCode = String(selectedBin.bin_code || '');
+
   if (sdk) {
     try {
-      ensureDogPayBinSchema();
-      const selectedBin = binId ? getDogPayBinById(Number(binId)) : getAvailableDogPayBins()[0];
-
-      if (!selectedBin?.external_bin_id) {
-        return res.json({ code: 400, message: '暂无可用 DogPay 卡BIN，请先同步 BIN', timestamp: Date.now() });
-      }
-
-      selectedBinId = selectedBin.id;
-      selectedBinCode = selectedBin.bin_code;
-
       const dogpayRes = await sdk.createCard({
         cardType: cardType === 'physical' ? 'physical' : 'virtual',
         cardName,
@@ -131,15 +134,6 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       return res.json({ code: 500, message: '渠道接口调用异常', timestamp: Date.now() });
     }
   } else {
-    const selectedBin = binId
-      ? db.prepare('SELECT id, bin_code FROM card_bins WHERE id = ? AND status = 1').get(Number(binId)) as any
-      : db.prepare('SELECT id, bin_code FROM card_bins WHERE status = 1 ORDER BY id ASC LIMIT 1').get() as any;
-
-    if (selectedBin) {
-      selectedBinId = selectedBin.id;
-      selectedBinCode = selectedBin.bin_code;
-    }
-
     const mock = generateCardNo(selectedBinCode || undefined);
     cardNo = mock.cardNo;
     masked = mock.masked;
@@ -150,7 +144,21 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   const result = db.prepare(`
     INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, cvv, purpose, external_id)
     VALUES (?, ?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?, ?)
-  `).run(cardNo, masked, req.user!.userId, selectedBinId, cardName, cardType, creditLimit, singleLimit || null, dailyLimit || null, expireDate, cvv, purpose || null, externalId || null);
+  `).run(
+    cardNo,
+    masked,
+    req.user!.userId,
+    selectedBinId,
+    cardName,
+    cardType,
+    creditLimit,
+    singleLimit || null,
+    dailyLimit || null,
+    expireDate,
+    cvv,
+    purpose || null,
+    externalId || null
+  );
 
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
 
