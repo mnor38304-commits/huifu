@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Input, Select, Button, Tag, Space, Card, Modal, Descriptions, message, Alert } from 'antd'
-import { SearchOutlined, EyeOutlined, StopOutlined, CheckOutlined, SettingOutlined } from '@ant-design/icons'
+import { Table, Input, Select, Button, Tag, Space, Card, Modal, Descriptions, message, Alert, Badge, Divider, Checkbox } from 'antd'
+import { SearchOutlined, EyeOutlined, StopOutlined, CheckOutlined, SettingOutlined, CreditCardOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { getMerchants, getMerchantDetail, setMerchantStatus, getMerchantBinPermissions, updateMerchantBinPermissions } from '../api'
 
 const { Option } = Select
@@ -161,13 +161,18 @@ export default function Merchants() {
       </Modal>
 
       <Modal
-        title={binMerchant ? `设置商户可开通卡段 - ${binMerchant.user_no}` : '设置商户可开通卡段'}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CreditCardOutlined />
+            {binMerchant ? `设置商户可开通卡段 - ${binMerchant.user_no}` : '设置商户可开通卡段'}
+          </div>
+        }
         open={binConfigVisible}
         onCancel={() => setBinConfigVisible(false)}
         onOk={saveBinConfig}
         confirmLoading={binSaving}
         okText="保存设置"
-        width={720}
+        width={760}
       >
         <Alert
           type="info"
@@ -175,23 +180,129 @@ export default function Merchants() {
           style={{ marginBottom: 16 }}
           message="不选择任何卡段时，商户默认可以开通所有已启用 BIN；选择后，商户只能开通你勾选的卡段。"
         />
-        <div style={{ marginBottom: 12, color: '#666' }}>
-          当前模式：{restricted ? '按授权卡段限制开通' : '默认全部启用卡段可开通'}
+        
+        <Card 
+          size="small" 
+          style={{ 
+            marginBottom: 16, 
+            background: restricted ? '#fff7e6' : '#f6ffed',
+            borderColor: restricted ? '#ffd591' : '#b7eb8f'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Badge 
+              status={restricted ? 'warning' : 'success'} 
+              text={
+                <span style={{ fontWeight: 500 }}>
+                  当前模式：{restricted ? '按授权卡段限制开通' : '默认全部启用卡段可开通'}
+                </span>
+              }
+            />
+          </div>
+          {restricted && (
+            <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>
+              已授权 {selectedBinIds.length} 个卡段
+            </div>
+          )}
+        </Card>
+
+        <Divider style={{ margin: '12px 0' }} />
+        
+        <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 500 }}>选择可开通的卡段</span>
+          <Space>
+            <Button 
+              size="small" 
+              onClick={() => { 
+                const enabledBinIds = allBins.filter(b => b.status === 1).map(b => b.id)
+                setSelectedBinIds(enabledBinIds)
+                setRestricted(true)
+              }}
+            >
+              全选
+            </Button>
+            <Button 
+              size="small" 
+              onClick={() => { 
+                setSelectedBinIds([])
+                setRestricted(false)
+              }}
+            >
+              清空
+            </Button>
+          </Space>
         </div>
+
         <Select
           mode="multiple"
           allowClear
           style={{ width: '100%' }}
           placeholder="请选择允许该商户开通的卡段"
           value={selectedBinIds}
-          onChange={(vals) => { setSelectedBinIds(vals as number[]); setRestricted((vals as number[]).length > 0) }}
+          onChange={(vals) => { 
+            setSelectedBinIds(vals as number[])
+            setRestricted((vals as number[]).length > 0)
+          }}
           optionFilterProp="label"
           maxTagCount="responsive"
-          options={allBins.filter(bin => bin.status === 1).map(bin => ({
-            value: bin.id,
-            label: `${bin.bin_code} - ${bin.bin_name}${bin.channel_code ? ` [${bin.channel_code}]` : ''}`
-          }))}
-        />
+          optionLabelProp="label"
+        >
+          {allBins
+            .filter(bin => bin.status === 1)
+            .map(bin => (
+              <Option 
+                key={bin.id} 
+                value={bin.id}
+                label={`${bin.bin_code} - ${bin.bin_name}`}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+                  <Space>
+                    <Tag color={bin.card_brand === 'VISA' ? 'blue' : 'orange'} size="small">
+                      {bin.card_brand || 'VISA'}
+                    </Tag>
+                    <strong>{bin.bin_code}</strong>
+                    <span style={{ color: '#666' }}>{bin.bin_name}</span>
+                    {bin.channel_code && (
+                      <Tag color="default" size="small">{bin.channel_code}</Tag>
+                    )}
+                  </Space>
+                  {selectedBinIds.includes(bin.id) && (
+                    <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                  )}
+                </div>
+              </Option>
+            ))}
+        </Select>
+
+        {selectedBinIds.length > 0 && (
+          <>
+            <Divider style={{ margin: '16px 0' }} />
+            <div>
+              <div style={{ marginBottom: 8, fontWeight: 500, color: '#666' }}>
+                已选择的卡段 ({selectedBinIds.length}个)：
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {selectedBinIds.map(id => {
+                  const bin = allBins.find(b => b.id === id)
+                  return bin ? (
+                    <Tag 
+                      key={id} 
+                      color="blue" 
+                      closable
+                      onClose={() => {
+                        const newIds = selectedBinIds.filter(i => i !== id)
+                        setSelectedBinIds(newIds)
+                        setRestricted(newIds.length > 0)
+                      }}
+                    >
+                      {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''}
+                    </Tag>
+                  ) : null
+                })}
+              </div>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   )

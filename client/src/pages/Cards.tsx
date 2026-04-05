@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert } from 'antd'
-import { PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Card, Badge, Divider, Tooltip } from 'antd'
+import { PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, CreditCardOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard, cancelCard } from '../services/api'
 
@@ -214,11 +214,11 @@ const Cards: React.FC = () => {
       />
 
       <Modal
-        title="创建新卡片"
+        title={<><CreditCardOutlined /> 创建新卡片</>}
         open={createModalVisible}
         onCancel={() => setCreateModalVisible(false)}
         footer={null}
-        width={500}
+        width={560}
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
           {createModalVisible && !binsLoading && availableBins.length === 0 && (
@@ -230,19 +230,71 @@ const Cards: React.FC = () => {
             />
           )}
 
+          {createModalVisible && availableBins.length > 0 && (
+            <Card size="small" style={{ marginBottom: 16, background: '#f6ffed', borderColor: '#b7eb8f' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Badge status="success" />
+                <span style={{ fontWeight: 500 }}>当前可用卡段 ({availableBins.length}个)</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {availableBins.slice(0, 5).map((bin) => (
+                  <Tag key={bin.id} color="green" style={{ margin: 0 }}>
+                    {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''}
+                  </Tag>
+                ))}
+                {availableBins.length > 5 && (
+                  <Tag color="default" style={{ margin: 0 }}>+{availableBins.length - 5} 更多</Tag>
+                )}
+              </div>
+            </Card>
+          )}
+
           <Form.Item name="cardName" label="卡片名称" rules={[{ required: true, message: '请输入卡片名称' }]}>
             <Input placeholder="例如：Facebook广告卡" />
           </Form.Item>
 
-          <Form.Item name="binId" label="卡 BIN" rules={availableBins.length ? [{ required: true, message: '请选择卡 BIN' }] : []}>
-            <Select loading={binsLoading} placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} allowClear>
+          <Form.Item 
+            name="binId" 
+            label={
+              <span>
+                选择卡 BIN 
+                <Tooltip title="选择卡 BIN 决定卡片的卡段和品牌属性">
+                  <InfoCircleOutlined style={{ color: '#999', marginLeft: 4 }} />
+                </Tooltip>
+              </span>
+            } 
+            rules={availableBins.length ? [{ required: true, message: '请选择卡 BIN' }] : []}
+          >
+            <Select 
+              loading={binsLoading} 
+              placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} 
+              allowClear
+              optionLabelProp="label"
+            >
               {availableBins.map((bin) => (
-                <Option key={bin.id} value={bin.id}>
-                  {bin.bin_code} - {bin.bin_name} {bin.card_brand ? `(${bin.card_brand})` : ''}
+                <Option 
+                  key={bin.id} 
+                  value={bin.id}
+                  label={`${bin.bin_code} - ${bin.bin_name}`}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>
+                      <Tag color={bin.card_brand === 'VISA' ? 'blue' : 'orange'} size="small" style={{ marginRight: 8 }}>
+                        {bin.card_brand || 'VISA'}
+                      </Tag>
+                      <strong>{bin.bin_code}</strong>
+                      <span style={{ marginLeft: 8, color: '#666' }}>{bin.bin_name}</span>
+                    </span>
+                    {bin.channel_code && (
+                      <Tag color="default" size="small">{bin.channel_code}</Tag>
+                    )}
+                  </div>
                 </Option>
               ))}
             </Select>
           </Form.Item>
+
+          <Divider style={{ margin: '16px 0' }} />
 
           <Form.Item name="cardType" label="卡片类型" rules={[{ required: true, message: '请选择卡片类型' }]}>
             <Select placeholder="选择卡片类型">
@@ -269,7 +321,7 @@ const Cards: React.FC = () => {
           </Form.Item>
 
           <Form.Item>
-            <Button type="primary" htmlType="submit" loading={creating} block>
+            <Button type="primary" htmlType="submit" loading={creating} block size="large">
               确认开卡
             </Button>
           </Form.Item>
