@@ -34,6 +34,7 @@ export const setCardStatus = (id, s, r) => BASE.post(`/cards/cards/${id}/status`
 export const getChannels = () => BASE.get('/cards/channels')
 export const createChannel = d => BASE.post('/cards/channels', d)
 export const updateChannel = (id, d) => BASE.put(`/cards/channels/${id}`, d)
+export const syncAllBins = () => BASE.post('/cards/channels/sync-all-bins')
 export const getUsdtOrders = p => BASE.get('/usdt/orders', { params: p })
 export const confirmUsdt = (id, tx) => BASE.post(`/usdt/orders/${id}/confirm`, { txHash: tx })
 export const getUsdtStats = () => BASE.get('/usdt/stats')

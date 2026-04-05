@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Card, Modal, Form, Input, InputNumber, Select, message, Tooltip, Divider } from 'antd'
-import { PlusOutlined, EditOutlined, InfoCircleOutlined } from '@ant-design/icons'
-import { getBins, createBin, updateBin, bulkUpdateBinRates } from '../api'
+import { Table, Button, Tag, Card, Modal, Form, Input, InputNumber, Select, message, Tooltip, Divider, Space, Badge } from 'antd'
+import { PlusOutlined, EditOutlined, InfoCircleOutlined, SyncOutlined } from '@ant-design/icons'
+import { getBins, createBin, updateBin, bulkUpdateBinRates, getChannels, syncAllBins } from '../api'
 
 const { Option } = Select
 
@@ -27,10 +27,12 @@ export default function CardBins() {
   const [submitting, setSubmitting] = useState(false)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [editRecord, setEditRecord] = useState<any>(null)
+  const [channels, setChannels] = useState<any[]>([])
+  const [syncing, setSyncing] = useState(false)
   const [form] = Form.useForm()
   const [batchForm] = Form.useForm()
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); loadChannels() }, [])
 
   const load = async () => {
     setLoading(true)
@@ -38,6 +40,35 @@ export default function CardBins() {
       const r: any = await getBins({ page: 1, pageSize: 50 })
       if (r.code === 0) { setList(r.data.list); setTotal(r.data.total) }
     } finally { setLoading(false) }
+  }
+
+  const loadChannels = async () => {
+    try {
+      const r: any = await getChannels()
+      if (r.code === 0) { setChannels(r.data || []) }
+    } catch (e) {}
+  }
+
+  const handleSyncBins = async () => {
+    const enabledChannels = channels.filter(c => c.status === 1)
+    if (enabledChannels.length === 0) {
+      message.warning('没有已启用的渠道可以同步')
+      return
+    }
+    setSyncing(true)
+    try {
+      const r: any = await syncAllBins()
+      if (r.code === 0) {
+        message.success(r.message)
+        load()
+      } else {
+        message.error(r.message)
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.message || '同步失败')
+    } finally {
+      setSyncing(false)
+    }
   }
 
   const openCreate = () => { setEditRecord(null); form.resetFields(); setModalVisible(true) }
@@ -97,6 +128,11 @@ export default function CardBins() {
   const cols = [
     { title: 'BIN码', dataIndex: 'bin_code', key: 'bin_code', width: 100 },
     { title: 'BIN名称', dataIndex: 'bin_name', key: 'bin_name', width: 160 },
+    { title: '渠道', dataIndex: 'channel_code', key: 'channel_code', width: 100, render: (v: string) => {
+      const channelMap: Record<string, string> = { 'dogpay': 'DogPay', 'manual': '手动添加' }
+      const colorMap: Record<string, string> = { 'dogpay': 'blue', 'manual': 'default' }
+      return <Tag color={colorMap[v] || 'default'}>{channelMap[v] || v}</Tag>
+    }},
     { title: '品牌', dataIndex: 'card_brand', key: 'card_brand', width: 80, render: (v: string) => <Tag color={v==='VISA'?'blue':'orange'}>{v}</Tag> },
     { title: '发卡机构', dataIndex: 'issuer', key: 'issuer', width: 120 },
     { title: '开卡费', dataIndex: 'open_fee', key: 'open_fee', width: 90, render: (v: number) => `$${v}` },
@@ -109,15 +145,32 @@ export default function CardBins() {
     { title: '操作', key: 'action', fixed: 'right' as const, width: 80, render: (_: any, r: any) => <Button type="link" size="small" onClick={() => openEdit(r)}><EditOutlined /> 编辑</Button> }
   ]
 
+  const enabledChannels = channels.filter(c => c.status === 1)
+
   return (
     <div>
       <Card style={{ borderRadius: 8 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
           <div>
             <span style={{ fontSize: 16, fontWeight: 600 }}>卡 BIN 费率管理</span>
             <span style={{ color: '#999', fontSize: 13, marginLeft: 8 }}>共 {total} 个BIN</span>
+            <Space style={{ marginLeft: 16 }}>
+              {enabledChannels.map(ch => (
+                <Badge key={ch.channel_code} status="success" text={`${ch.channel_name} 已启用`} />
+              ))}
+              {enabledChannels.length === 0 && <Badge status="warning" text="暂无启用的渠道" />}
+            </Space>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            <Button 
+              icon={<SyncOutlined spin={syncing} />} 
+              onClick={handleSyncBins} 
+              loading={syncing}
+              disabled={enabledChannels.length === 0}
+              title={enabledChannels.length === 0 ? '没有已启用的渠道' : '同步已启用渠道的卡段'}
+            >
+              同步渠道卡段
+            </Button>
             <Button onClick={openBatch} disabled={!selectedRowKeys.length}>批量费率设置</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增BIN</Button>
           </div>

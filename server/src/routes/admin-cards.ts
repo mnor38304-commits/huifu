@@ -103,6 +103,57 @@ router.post('/channels/dogpay/sync-bins', adminAuth, async (req: any, res) => {
   }
 });
 
+// 同步所有已启用渠道的卡段
+router.post('/channels/sync-all-bins', adminAuth, async (req: any, res) => {
+  try {
+    const channels = db.prepare("SELECT * FROM card_channels WHERE status = 1").all() as any[];
+    if (!channels.length) {
+      return res.json({ code: 400, message: '没有已启用的渠道', timestamp: Date.now() });
+    }
+
+    const results: any[] = [];
+
+    for (const channel of channels) {
+      try {
+        if (channel.channel_code === 'dogpay') {
+          const sdk = new DogPaySDK({ 
+            appId: channel.api_key, 
+            appSecret: channel.api_secret, 
+            apiBaseUrl: channel.api_base_url 
+          });
+          const result = await syncDogPayBins(sdk);
+          results.push({
+            channelCode: channel.channel_code,
+            channelName: channel.channel_name,
+            success: true,
+            ...result
+          });
+        }
+        // 可以在这里添加其他渠道的同步逻辑
+      } catch (err: any) {
+        results.push({
+          channelCode: channel.channel_code,
+          channelName: channel.channel_name,
+          success: false,
+          error: err.message
+        });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.length - successCount;
+
+    return res.json({ 
+      code: 0, 
+      message: `同步完成：${successCount} 个成功，${failCount} 个失败`, 
+      data: { results, successCount, failCount, total: results.length },
+      timestamp: Date.now() 
+    });
+  } catch (err: any) {
+    return res.json({ code: 500, message: err.message, timestamp: Date.now() });
+  }
+});
+
 router.get('/cards', adminAuth, (req, res) => {
   try {
     const { page = 1, pageSize = 20, keyword, status, userId } = req.query;
