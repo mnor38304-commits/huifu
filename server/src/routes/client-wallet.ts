@@ -4,6 +4,43 @@ import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
+// 确保必要的表存在
+const ensureTables = () => {
+  try {
+    db.run(`CREATE TABLE IF NOT EXISTS wallets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER UNIQUE NOT NULL,
+      balance_usd REAL DEFAULT 0,
+      balance_usdt REAL DEFAULT 0,
+      locked_usd REAL DEFAULT 0,
+      currency VARCHAR(10) DEFAULT 'USD',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    
+    db.run(`CREATE TABLE IF NOT EXISTS usdt_orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_no VARCHAR(32) UNIQUE NOT NULL,
+      user_id INTEGER NOT NULL,
+      amount_usdt REAL NOT NULL,
+      amount_usd REAL NOT NULL,
+      exchange_rate REAL NOT NULL,
+      network VARCHAR(20) DEFAULT 'TRC20',
+      pay_address VARCHAR(100) NOT NULL,
+      tx_hash VARCHAR(100),
+      status INTEGER DEFAULT 0,
+      dogpay_order_id VARCHAR(100),
+      expire_at DATETIME,
+      confirmed_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+  } catch (e) {
+    console.error('[Wallet] ensureTables error:', e);
+  }
+};
+ensureTables();
+
 // 所有路由需要登录
 router.use(authMiddleware);
 
@@ -134,6 +171,13 @@ router.get('/deposits', (req, res) => {
 // ── 创建充值订单（C2C买币）───────────────────────────────────
 router.post('/deposit/c2c', async (req, res) => {
   const userId = getUserId(req);
+  
+  console.log('[Wallet] createC2COrder - userId:', userId, 'body:', req.body);
+  
+  if (!userId) {
+    return res.json({ code: 401, message: '用户未登录' });
+  }
+
   const { amountUsdt, network = 'TRC20' } = req.body;
 
   if (!amountUsdt || amountUsdt <= 0) {
