@@ -17,8 +17,9 @@ export class DogPaySDK {
 
   private async getAccessToken(): Promise<string> {
     const now = Date.now();
-    if (this.accessToken && now < this.tokenExpiresAt) {
-      return this.accessToken;
+    const cachedToken = this.accessToken;
+    if (cachedToken && now < this.tokenExpiresAt) {
+      return cachedToken;
     }
 
     const response = await axios.post(
@@ -31,9 +32,10 @@ export class DogPaySDK {
     );
 
     if (response.data?.data?.access_token) {
-      this.accessToken = response.data.data.access_token;
+      const accessToken: string = response.data.data.access_token;
+      this.accessToken = accessToken;
       this.tokenExpiresAt = now + ((response.data.data.expires_in || 7200) - 300) * 1000;
-      return this.accessToken;
+      return accessToken;
     }
 
     throw new Error('Failed to get DogPay access token');
