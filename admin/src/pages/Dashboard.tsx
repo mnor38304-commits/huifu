@@ -18,7 +18,7 @@ export default function Dashboard() {
     { title: '总卡片数', value: data.totalCards, sub: `正常 ${data.activeCards}`, icon: <CreditCardOutlined />, color: '#52c41a' },
     { title: '今日交易笔数', value: data.totalTxnToday, sub: `金额 $${(data.totalVolToday||0).toFixed(2)}`, icon: <SwapOutlined />, color: '#faad14' },
     { title: '今日手续费', value: `$${(data.totalFeeToday||0).toFixed(2)}`, sub: `待审KYC ${data.kycPending}`, icon: <DollarOutlined />, color: '#722ed1' },
-    { title: '账户总余额', value: `$${(data.totalBalance||0).toFixed(2)}`, sub: `USDT待确认 ${data.pendingUsdt}`, icon: <RiseOutlined />, color: '#13c2c2' },
+    { title: '账户总余额', value: `$${(data.totalBalance||0).toFixed(2)}`, sub: `商户钱包 $${(data.walletTotalBalance||0).toFixed(2)}`, icon: <RiseOutlined />, color: '#13c2c2' },
   ]
 
   const weekCols = [

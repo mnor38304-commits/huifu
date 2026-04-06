@@ -16,6 +16,11 @@ router.get('/stats', adminAuth, (req, res) => {
   const totalFeeToday = (db.prepare(`SELECT COALESCE(SUM(fee),0) as v FROM transactions WHERE date(txn_time)=date('now') AND status=1`).get() as any).v;
   const pendingUsdt   = (db.prepare('SELECT COUNT(*) as c FROM usdt_orders WHERE status=0').get() as any).c;
   const totalBalance  = (db.prepare('SELECT COALESCE(SUM(balance),0) as v FROM cards WHERE status=1').get() as any).v;
+  
+  // 商户钱包总余额
+  const walletBalanceData = (db.prepare('SELECT COALESCE(SUM(balance_usd),0) as total, COALESCE(SUM(balance_usdt),0) as totalUsdt FROM wallets').get() as any);
+  const walletTotalBalance = walletBalanceData?.total || 0;
+  const walletTotalUsdt = walletBalanceData?.totalUsdt || 0;
 
   // 近7天交易量
   const weeklyTxn = db.prepare(`
@@ -28,7 +33,8 @@ router.get('/stats', adminAuth, (req, res) => {
     totalUsers, activeUsers, kycPending,
     totalCards, activeCards,
     totalTxnToday, totalVolToday, totalFeeToday,
-    pendingUsdt, totalBalance, weeklyTxn
+    pendingUsdt, totalBalance, weeklyTxn,
+    walletTotalBalance, walletTotalUsdt
   }, timestamp: Date.now() });
 });
 

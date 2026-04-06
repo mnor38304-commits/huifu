@@ -21,6 +21,7 @@ import adminMerchantsRoutes from './routes/admin-merchants';
 import adminCardsRoutes from './routes/admin-cards';
 import adminUsdtRoutes from './routes/admin-usdt';
 import adminOpsRoutes from './routes/admin-ops';
+import adminWalletRoutes from './routes/admin-wallet';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -46,6 +47,7 @@ app.use('/api/admin/merchants', adminMerchantsRoutes);
 app.use('/api/admin/cards', adminCardsRoutes);
 app.use('/api/admin/usdt', adminUsdtRoutes);
 app.use('/api/admin/ops', adminOpsRoutes);
+app.use('/api/admin/wallet', adminWalletRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
 

@@ -4,7 +4,8 @@ import { Layout, Menu, Avatar, Dropdown, Badge, theme } from 'antd'
 import {
   DashboardOutlined, TeamOutlined, CreditCardOutlined, SwapOutlined,
   DollarOutlined, SettingOutlined, LogoutOutlined, UserOutlined,
-  BellOutlined, SafetyOutlined, FileTextOutlined, ApiOutlined, AuditOutlined
+  BellOutlined, SafetyOutlined, FileTextOutlined, ApiOutlined, AuditOutlined,
+  WalletOutlined
 } from '@ant-design/icons'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -17,6 +18,7 @@ import UsdtOrders from './pages/UsdtOrders'
 import Transactions from './pages/Transactions'
 import Notices from './pages/Notices'
 import AdminLogs from './pages/AdminLogs'
+import WalletManagement from './pages/WalletManagement'
 import { getAdminInfo } from './api'
 
 const { Header, Sider, Content } = Layout
@@ -27,6 +29,7 @@ const menuItems = [
     key: 'merchant', icon: <TeamOutlined />, label: '商户管理',
     children: [
       { key: '/merchants', label: '商户列表' },
+      { key: '/wallet', label: '钱包管理', icon: <WalletOutlined /> },
       { key: '/kyc-audit', label: 'KYC审核', icon: <AuditOutlined /> },
     ]
   },
@@ -124,6 +127,7 @@ export default function App() {
             <Route path="/channels" element={<Channels />} />
             <Route path="/usdt" element={<UsdtOrders />} />
             <Route path="/transactions" element={<Transactions />} />
+            <Route path="/wallet" element={<WalletManagement />} />
             <Route path="/notices" element={<Notices />} />
             <Route path="/logs" element={<AdminLogs />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -174,7 +174,7 @@ export async function initDatabase(): Promise<Database> {
   db.run(`CREATE TABLE IF NOT EXISTS wallet_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
-    type VARCHAR(20) NOT NULL,       -- topup充值/withdraw提现/consume消费/lock锁定/unlock解锁/refund退款
+    type VARCHAR(20) NOT NULL,       -- topup充值/withdraw提现/consume消费/lock锁定/unlock解锁/refund退款/ADMIN_IN管理员调增/ADMIN_OUT管理员调减
     amount REAL NOT NULL,            -- 变动金额（正数增加，负数减少）
     balance_before REAL NOT NULL,    -- 变动前余额
     balance_after REAL NOT NULL,     -- 变动后余额
@@ -184,6 +184,21 @@ export async function initDatabase(): Promise<Database> {
     reference_type VARCHAR(50),      -- 关联类型：usdt_order/card_topup/...
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  // ── 钱包余额调整记录表 ───────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS wallet_adjustments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    admin_id INTEGER NOT NULL,
+    type VARCHAR(20) NOT NULL,       -- increase调增/decrease调减
+    amount REAL NOT NULL,            -- 调整金额
+    balance_before REAL NOT NULL,    -- 调整前余额
+    balance_after REAL NOT NULL,     -- 调整后余额
+    reason VARCHAR(500),             -- 调整原因
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (admin_id) REFERENCES admins(id)
   )`);
 
   // ── 卡渠道对接配置表 ─────────────────────────────────────────

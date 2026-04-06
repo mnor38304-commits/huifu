@@ -64,4 +64,11 @@ export const updateNotice = (id, d) => BASE.put(`/ops/notices/${id}`, d)
 export const deleteNotice = id => BASE.delete(`/ops/notices/${id}`)
 export const getLogs = p => BASE.get('/ops/logs', { params: p })
 
+// 商户钱包管理
+export const getWalletList = p => BASE.get('/wallet/list', { params: p })
+export const getWalletDetail = (userId: number) => BASE.get(`/wallet/${userId}`)
+export const adjustWalletBalance = (userId: number, amount: number, type: 'increase' | 'decrease', reason: string) => 
+  BASE.post('/wallet/adjust', { userId, amount, type, reason })
+export const getWalletRecords = (userId: number, p?: any) => BASE.get(`/wallet/records/${userId}`, { params: p })
+
 export default BASE
