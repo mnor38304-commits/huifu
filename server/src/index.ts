@@ -29,6 +29,18 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// ── 前端静态文件托管 ──────────────────────────────────────────
+const adminDist = path.join(__dirname, '../public/admin');
+const clientDist = path.join(__dirname, '../public/client');
+// admin 前端：/admin 路径
+app.use('/admin', express.static(adminDist));
+app.get('/admin/*', (_req, res) => {
+  const indexPath = path.join(adminDist, 'index.html');
+  res.sendFile(indexPath, (err) => { if (err) res.status(404).send('Admin not found') });
+});
+// client 前端：根路径
+app.use(express.static(clientDist));
+
 // ── 商户端 API ────────────────────────────────────────────────
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/kyc', kycRoutes);
@@ -46,6 +58,12 @@ app.use('/api/admin/usdt', adminUsdtRoutes);
 app.use('/api/admin/ops', adminOpsRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
+
+// client SPA 回退（所有未匹配路由返回 client index.html）
+app.get('*', (_req, res) => {
+  const indexPath = path.join(clientDist, 'index.html');
+  res.sendFile(indexPath, (err) => { if (err) res.status(404).send('Not found') });
+});
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err);
