@@ -149,6 +149,7 @@ export async function initDatabase(): Promise<Database> {
     pay_address VARCHAR(100) NOT NULL,    -- 收款地址
     tx_hash VARCHAR(100),            -- 链上交易hash
     status INTEGER DEFAULT 0,        -- 0待支付 1已支付 2已确认 3已过期 4失败
+    dogpay_order_id VARCHAR(100),     -- DogPay订单ID
     expire_at DATETIME,
     confirmed_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

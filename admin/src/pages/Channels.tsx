@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Space, Card, Modal, Form, Input, Select, message, Switch, Descriptions } from 'antd'
-import { PlusOutlined, EditOutlined, ApiOutlined } from '@ant-design/icons'
-import { getChannels, createChannel, updateChannel } from '../api'
+import { Table, Button, Tag, Space, Card, Modal, Form, Input, Select, message, Descriptions, Popconfirm } from 'antd'
+import { PlusOutlined, EditOutlined, ApiOutlined, SyncOutlined } from '@ant-design/icons'
+import { getChannels, createChannel, updateChannel, syncDogPayBins } from '../api'
 
 const { Option } = Select
 
@@ -11,6 +11,7 @@ export default function Channels() {
   const [modalVisible, setModalVisible] = useState(false)
   const [editRecord, setEditRecord] = useState<any>(null)
   const [form] = Form.useForm()
+  const [syncing, setSyncing] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -37,8 +38,25 @@ export default function Channels() {
     } catch (e: any) { message.error(e.response?.data?.message || '操作失败') }
   }
 
+  // 同步DogPay渠道的BIN
+  const handleSyncBins = async () => {
+    setSyncing(true)
+    try {
+      const r: any = await syncDogPayBins()
+      if (r.code === 0) {
+        message.success(`BIN同步成功！新增: ${r.data?.synced || 0} 个`)
+      } else {
+        message.error(r.message || '同步失败')
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.message || '同步失败')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const channelLogos: Record<string, string> = {
-    AIRWALLEX: '🌐', PHOTON: '⚡', CUSTOM: '🔧'
+    AIRWALLEX: '🌐', PHOTON: '⚡', DOGPAY: '🐕', CUSTOM: '🔧'
   }
 
   const cols = [
@@ -66,7 +84,12 @@ export default function Channels() {
       <Card style={{ borderRadius: 8 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
           <span style={{ fontSize: 16, fontWeight: 600 }}>卡渠道管理</span>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>添加渠道</Button>
+          <Space>
+            <Button icon={<SyncOutlined spin={syncing} />} onClick={handleSyncBins} loading={syncing}>
+              同步BIN
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>添加渠道</Button>
+          </Space>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>

@@ -112,4 +112,66 @@ export class DogPaySDK {
   async deleteCard(cardId: string) {
     return this.request('DELETE', `/open-api/v1/cards/${cardId}`);
   }
+
+  // ==================== USDT充值相关接口 ====================
+
+  /**
+   * 获取用户专属充值地址
+   * 用于USDT充值，系统会为用户生成一个专属的收款地址
+   */
+  async getDepositAddress(params?: { chain?: string }) {
+    return this.request('GET', '/open-api/v1/deposit/address', { params });
+  }
+
+  /**
+   * 查询充值记录
+   * 用于查询用户的历史充值记录
+   */
+  async getDepositHistory(params?: {
+    page?: number;
+    pageSize?: number;
+    startDate?: string;
+    endDate?: string;
+    status?: string;
+  }) {
+    return this.request('GET', '/open-api/v1/deposit/history', { params });
+  }
+
+  /**
+   * 创建C2C买币订单
+   * 用于USDT充值，用户通过C2C方式购买USDT
+   */
+  async createC2COrder(params: {
+    amount: number;        // 购买金额
+    currency?: string;     // 货币类型，默认CNY
+    token?: string;       // 代币类型，默认USDT
+    network?: string;     // 网络类型：TRC20/ERC20/BEP20
+  }) {
+    return this.request('POST', '/open-api/v1/c2c', { data: params });
+  }
+
+  /**
+   * 获取C2C订单列表
+   */
+  async getC2COrders(params?: {
+    page?: number;
+    pageSize?: number;
+    status?: string;
+  }) {
+    return this.request('GET', '/open-api/v1/c2c/orders', { params });
+  }
+
+  /**
+   * 获取C2C订单详情
+   */
+  async getC2COrderDetail(orderId: string) {
+    return this.request('GET', `/open-api/v1/c2c/orders/${orderId}`);
+  }
+
+  /**
+   * 获取钱包列表
+   */
+  async getWallets() {
+    return this.request('GET', '/open-api/v1/wallets');
+  }
 }

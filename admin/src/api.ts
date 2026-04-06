@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const BASE = axios.create({ baseURL: '/admin/api', timeout: 10000 })
+const BASE = axios.create({ baseURL: '/api/admin', timeout: 10000 })
 
 BASE.interceptors.request.use(config => {
   const t = localStorage.getItem('admin_token')
@@ -31,12 +31,31 @@ export const updateBin = (id, d) => BASE.put(`/cards/bins/${id}`, d)
 export const bulkUpdateBinRates = (ids, rates) => BASE.post('/cards/bins/batch-rates', { ids, rates })
 export const getCards = p => BASE.get('/cards/cards', { params: p })
 export const setCardStatus = (id, s, r) => BASE.post(`/cards/cards/${id}/status`, { status: s, reason: r })
+// 辅助函数：将camelCase转换为snake_case
+function toSnakeCase(obj: any): any {
+  if (obj === null || obj === undefined) return obj
+  if (typeof obj !== 'object') return obj
+  if (Array.isArray(obj)) return obj.map(toSnakeCase)
+  const result: any = {}
+  for (const key of Object.keys(obj)) {
+    const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase()
+    result[snakeKey] = obj[key]
+  }
+  return result
+}
+
 export const getChannels = () => BASE.get('/cards/channels')
-export const createChannel = d => BASE.post('/cards/channels', d)
-export const updateChannel = (id, d) => BASE.put(`/cards/channels/${id}`, d)
+export const createChannel = d => BASE.post('/cards/channels', toSnakeCase(d))
+export const updateChannel = (id, d) => BASE.put(`/cards/channels/${id}`, toSnakeCase(d))
+// 同步DogPay渠道的BIN
+export const syncDogPayBins = () => BASE.post('/cards/channels/dogpay/sync-bins')
 export const getUsdtOrders = p => BASE.get('/usdt/orders', { params: p })
 export const confirmUsdt = (id, tx) => BASE.post(`/usdt/orders/${id}/confirm`, { txHash: tx })
 export const getUsdtStats = () => BASE.get('/usdt/stats')
+// USDT充值相关
+export const getUsdtAddress = (network: string) => BASE.get('/usdt/address', { params: { network } })
+export const syncUsdtOrder = (id: number) => BASE.post(`/usdt/orders/${id}/sync`)
+export const getUsdtOrderDetail = (id: number) => BASE.get(`/usdt/orders/${id}/detail`)
 export const getTransactions = p => BASE.get('/ops', { params: p })
 export const getTxnStats = () => BASE.get('/ops/stats')
 export const getNotices = () => BASE.get('/ops/notices')

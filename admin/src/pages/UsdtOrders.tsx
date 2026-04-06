@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Table, Button, Tag, Space, Card, Modal, Input, message, Row, Col, Statistic, Select } from 'antd'
-import { CheckCircleOutlined, SearchOutlined } from '@ant-design/icons'
-import { getUsdtOrders, confirmUsdt, getUsdtStats } from '../api'
+import { CheckCircleOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
+import { getUsdtOrders, confirmUsdt, getUsdtStats, syncUsdtOrder } from '../api'
 
 const { Option } = Select
 
@@ -15,6 +15,7 @@ export default function UsdtOrders() {
   const [list, setList] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState<number | null>(null)
   const [stats, setStats] = useState<any>({})
   const [filters, setFilters] = useState<any>({ page: 1, pageSize: 20 })
   const [confirmModal, setConfirmModal] = useState<{ visible: boolean; record: any }>({ visible: false, record: null })
@@ -41,6 +42,29 @@ export default function UsdtOrders() {
     else message.error(r.message)
   }
 
+  // 同步DogPay订单状态
+  const handleSyncOrder = async (order: any) => {
+    if (!order.dogpay_order_id) {
+      message.warning('该订单未对接DogPay')
+      return
+    }
+    setSyncing(order.id)
+    try {
+      const r: any = await syncUsdtOrder(order.id)
+      if (r.code === 0) {
+        message.success('状态同步成功')
+        load()
+        loadStats()
+      } else {
+        message.error(r.message || '同步失败')
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.message || '同步失败')
+    } finally {
+      setSyncing(null)
+    }
+  }
+
   const cols = [
     { title: '订单号', dataIndex: 'order_no', key: 'order_no', width: 180 },
     { title: '商户', dataIndex: 'user_no', key: 'user_no', width: 160 },
@@ -59,12 +83,21 @@ export default function UsdtOrders() {
       render: (v: number) => <Tag color={statusMap[v]?.color}>{statusMap[v]?.text}</Tag> },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 160,
       render: (v: string) => v?.replace('T',' ').split('.')[0] },
-    { title: '操作', key: 'action', fixed: 'right' as const, width: 120,
-      render: (_: any, r: any) => r.status === 0 || r.status === 1 ? (
-        <Button type="primary" size="small" icon={<CheckCircleOutlined />} onClick={() => setConfirmModal({ visible: true, record: r })}>
-          确认到账
-        </Button>
-      ) : null
+    { title: '操作', key: 'action', fixed: 'right' as const, width: 180,
+      render: (_: any, r: any) => (
+        <Space size="small">
+          {r.dogpay_order_id && r.status !== 2 && (
+            <Button type="text" size="small" icon={<SyncOutlined spin={syncing === r.id} />} onClick={() => handleSyncOrder(r)} loading={syncing === r.id}>
+              同步
+            </Button>
+          )}
+          {r.status === 0 || r.status === 1 ? (
+            <Button type="primary" size="small" icon={<CheckCircleOutlined />} onClick={() => setConfirmModal({ visible: true, record: r })}>
+              确认
+            </Button>
+          ) : null}
+        </Space>
+      )
     }
   ]
 
