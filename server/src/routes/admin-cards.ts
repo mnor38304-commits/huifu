@@ -89,6 +89,62 @@ router.post('/bins/batch-rates', adminAuth, (req: any, res) => {
   }
 });
 
+// 获取单个渠道的可用BIN列表（实时从渠道API拉取，不写库）
+router.get('/channels/:id/bins', adminAuth, async (req: any, res) => {
+  try {
+    const channel = db.prepare('SELECT * FROM card_channels WHERE id = ?').get(Number(req.params.id)) as any;
+    if (!channel) return res.json({ code: 404, message: '渠道不存在', timestamp: Date.now() });
+    if (!channel.api_key) return res.json({ code: 400, message: '渠道未配置 API Key，请先完成渠道配置', timestamp: Date.now() });
+
+    if (channel.channel_code === 'dogpay') {
+      const sdk = new DogPaySDK({
+        appId: channel.api_key,
+        appSecret: channel.api_secret,
+        apiBaseUrl: channel.api_base_url,
+      });
+      const payload = await sdk.getCardBins();
+      // 兼容多种响应结构
+      let list: any[] = [];
+      if (Array.isArray(payload)) list = payload;
+      else if (Array.isArray(payload?.data)) list = payload.data;
+      else if (Array.isArray(payload?.data?.list)) list = payload.data.list;
+      else if (Array.isArray(payload?.data?.records)) list = payload.data.records;
+      else if (Array.isArray(payload?.list)) list = payload.list;
+      return res.json({ code: 0, data: { list, total: list.length, channelCode: channel.channel_code }, timestamp: Date.now() });
+    }
+
+    return res.json({ code: 400, message: `暂不支持渠道 "${channel.channel_name}" 的BIN获取`, timestamp: Date.now() });
+  } catch (err: any) {
+    console.error('Get channel bins error:', err.message);
+    return res.json({ code: 500, message: err.response?.data?.message || err.message, timestamp: Date.now() });
+  }
+});
+
+// 同步单个渠道的BIN到数据库
+router.post('/channels/:id/sync-bins', adminAuth, async (req: any, res) => {
+  try {
+    const channel = db.prepare('SELECT * FROM card_channels WHERE id = ?').get(Number(req.params.id)) as any;
+    if (!channel) return res.json({ code: 404, message: '渠道不存在', timestamp: Date.now() });
+    if (channel.status !== 1) return res.json({ code: 400, message: '渠道已禁用，请先启用', timestamp: Date.now() });
+    if (!channel.api_key) return res.json({ code: 400, message: '渠道未配置 API Key，请先完成渠道配置', timestamp: Date.now() });
+
+    if (channel.channel_code === 'dogpay') {
+      const sdk = new DogPaySDK({
+        appId: channel.api_key,
+        appSecret: channel.api_secret,
+        apiBaseUrl: channel.api_base_url,
+      });
+      const result = await syncDogPayBins(sdk);
+      return res.json({ code: 0, message: `同步成功，共同步 ${result.synced} 个BIN`, data: result, timestamp: Date.now() });
+    }
+
+    return res.json({ code: 400, message: `暂不支持渠道 "${channel.channel_name}" 的BIN同步`, timestamp: Date.now() });
+  } catch (err: any) {
+    console.error('Sync channel bins error:', err.message);
+    return res.json({ code: 500, message: err.response?.data?.message || err.message, timestamp: Date.now() });
+  }
+});
+
 router.post('/channels/dogpay/sync-bins', adminAuth, async (req: any, res) => {
   try {
     const channel = db.prepare("SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1").get() as any;
