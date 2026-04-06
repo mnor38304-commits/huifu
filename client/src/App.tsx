@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { Layout, Menu, theme } from 'antd'
-import { 
-  DashboardOutlined, 
-  CreditCardOutlined, 
-  SwapOutlined, 
+import {
+  DashboardOutlined,
+  CreditCardOutlined,
+  SwapOutlined,
   FileTextOutlined,
   SettingOutlined,
   LogoutOutlined,
   BellOutlined,
-  UserOutlined
+  UserOutlined,
+  WalletOutlined
 } from '@ant-design/icons'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -18,6 +19,7 @@ import Cards from './pages/Cards'
 import CardDetail from './pages/CardDetail'
 import Transactions from './pages/Transactions'
 import Bills from './pages/Bills'
+import Wallet from './pages/Wallet'
 import Settings from './pages/Settings'
 import { getUserInfo } from './services/api'
 
@@ -53,6 +55,7 @@ const App: React.FC = () => {
 
   const menuItems = [
     { key: '/', icon: <DashboardOutlined />, label: '账户概览' },
+    { key: '/wallet', icon: <WalletOutlined />, label: '钱包' },
     { key: '/cards', icon: <CreditCardOutlined />, label: 'VCC卡片' },
     { key: '/transactions', icon: <SwapOutlined />, label: '交易查询' },
     { key: '/bills', icon: <FileTextOutlined />, label: '账单中心' },
@@ -98,6 +101,7 @@ const App: React.FC = () => {
         <Content style={{ margin: 16, padding: 24, background: colorBgContainer, borderRadius: borderRadiusLG, minHeight: 280, overflow: 'auto' }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/wallet" element={<Wallet />} />
             <Route path="/cards" element={<Cards />} />
             <Route path="/cards/:id" element={<CardDetail />} />
             <Route path="/transactions" element={<Transactions />} />

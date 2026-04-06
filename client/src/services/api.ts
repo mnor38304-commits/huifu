@@ -43,4 +43,13 @@ export const getNotices = (page = 1, pageSize = 10) => api.get('/notices', { par
 export const getKycStatus = () => api.get('/kyc/status')
 export const submitKyc = (data: any) => api.post('/kyc/submit', data)
 
+// 钱包相关
+export const getWalletInfo = () => api.get('/wallet/info')
+export const getWalletStats = () => api.get('/wallet/stats')
+export const getWalletAddress = (network: string) => api.get('/wallet/address', { params: { network } })
+export const getDepositList = (params: any) => api.get('/wallet/deposits', { params })
+export const getDepositDetail = (id: number) => api.get(`/wallet/deposits/${id}`)
+export const createC2COrder = (data: any) => api.post('/wallet/deposit/c2c', data)
+export const getWalletRecords = (params: any) => api.get('/wallet/records', { params })
+
 export default api

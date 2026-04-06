@@ -157,6 +157,35 @@ export async function initDatabase(): Promise<Database> {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── 用户钱包表 ───────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS wallets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER UNIQUE NOT NULL,
+    balance_usd REAL DEFAULT 0,      -- USD余额
+    balance_usdt REAL DEFAULT 0,    -- USDT余额
+    locked_usd REAL DEFAULT 0,       -- 锁定金额
+    currency VARCHAR(10) DEFAULT 'USD',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  // ── 钱包流水记录表 ───────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS wallet_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    type VARCHAR(20) NOT NULL,       -- topup充值/withdraw提现/consume消费/lock锁定/unlock解锁/refund退款
+    amount REAL NOT NULL,            -- 变动金额（正数增加，负数减少）
+    balance_before REAL NOT NULL,    -- 变动前余额
+    balance_after REAL NOT NULL,     -- 变动后余额
+    currency VARCHAR(10) DEFAULT 'USD',
+    remark VARCHAR(200),             -- 备注
+    reference_id INTEGER,            -- 关联订单ID
+    reference_type VARCHAR(50),      -- 关联类型：usdt_order/card_topup/...
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
   // ── 卡渠道对接配置表 ─────────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS card_channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -197,6 +226,8 @@ export async function initDatabase(): Promise<Database> {
     db.run('CREATE INDEX IF NOT EXISTS idx_transactions_card_id ON transactions(card_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_usdt_orders_user_id ON usdt_orders(user_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_wallets_user_id ON wallets(user_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_wallet_records_user_id ON wallet_records(user_id)');
   } catch (e) {}
 
   saveDatabase();

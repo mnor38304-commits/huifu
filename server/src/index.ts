@@ -12,6 +12,7 @@ import cardRoutes from './routes/cards';
 import transactionRoutes from './routes/transactions';
 import billRoutes from './routes/bills';
 import noticeRoutes from './routes/notices';
+import walletRoutes from './routes/client-wallet';
 
 // 管理员路由
 import adminAuthRoutes from './routes/admin-auth';
@@ -36,6 +37,7 @@ app.use('/api/v1/cards', cardRoutes);
 app.use('/api/v1/transactions', transactionRoutes);
 app.use('/api/v1/bills', billRoutes);
 app.use('/api/v1/notices', noticeRoutes);
+app.use('/api/v1/wallet', walletRoutes);
 
 // ── 管理员 API ────────────────────────────────────────────────
 app.use('/api/admin/auth', adminAuthRoutes);
