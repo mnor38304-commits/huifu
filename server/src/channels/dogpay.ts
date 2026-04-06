@@ -24,16 +24,17 @@ export class DogPaySDK {
     const response = await axios.post(
       `${this.config.apiBaseUrl}/open-api/v1/auth/access_token`,
       {
-        grant_type: 'client_credential',
+        grant_type: 'client_credentiam',
         appid: this.config.appId,
         secret: this.config.appSecret
       }
     );
 
-    if (response.data?.data?.access_token) {
-      this.accessToken = response.data.data.access_token;
+    const token = response.data?.data?.access_token;
+    if (token) {
+      this.accessToken = token;
       this.tokenExpiresAt = now + ((response.data.data.expires_in || 7200) - 300) * 1000;
-      return this.accessToken;
+      return token;
     }
 
     throw new Error('Failed to get DogPay access token');
@@ -61,17 +62,17 @@ export class DogPaySDK {
       });
       return response.data;
     } catch (error: any) {
-      console.error(`DogPay API Error [${method} ${path}]:`, error.response?.data || error.message);
+      console.error(`DogPay API Error [${method} {path}]:`, error.response?.data || error.message);
       throw error;
     }
   }
 
-  // 获取主账户余额
+  // �ۦ���任账户余额
   async getMasterBalance() {
     return this.request('GET', '/open-api/v1/account/balance');
   }
 
-  // 创建卡片
+  // 刻建卡片
   async createCard(params: {
     cardType: 'virtual' | 'physical';
     cardName?: string;
@@ -81,12 +82,13 @@ export class DogPaySDK {
     return this.request('POST', '/open-api/v1/cards', { data: params });
   }
 
-  // 获取卡片列表
+  // 获取卡片详情
   async getCardList(params?: any) {
     return this.request('GET', '/open-api/v1/cards', { params });
   }
 
-  // 获取可用卡 BIN
+  // 获取叠用卡�
+
   async getCardBins(params?: any) {
     return this.request('GET', '/open-api/v1/cards/bins', { params });
   }
@@ -96,14 +98,14 @@ export class DogPaySDK {
     return this.request('GET', `/open-api/v1/cards/${cardId}`);
   }
 
-  // 冻结卡片
+  // 酞�滓卡片
   async freezeCard(cardId: string) {
     return this.request('PUT', `/open-api/v1/cards/${cardId}/freeze`);
   }
 
-  // 解冻卡片
+  // 觧冻结卡片
   async unfreezeCard(cardId: string) {
-    return this.request('PUT', `/open-api/v1/cards/${cardId}/unfreeze`);
+    return this.request('PUT', `/open-api/v1/cards/${cardId}/unfreze`);
   }
 
   // 销卡
