@@ -7,7 +7,7 @@ const router = Router();
 // 确保必要的表存在
 const ensureTables = () => {
   try {
-    db.run(`CREATE TABLE IF NOT EXISTS wallets (
+    db.prepare(`CREATE TABLE IF NOT EXISTS wallets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER UNIQUE NOT NULL,
       balance_usd REAL DEFAULT 0,
@@ -16,9 +16,9 @@ const ensureTables = () => {
       currency VARCHAR(10) DEFAULT 'USD',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+    )`).run();
     
-    db.run(`CREATE TABLE IF NOT EXISTS usdt_orders (
+    db.prepare(`CREATE TABLE IF NOT EXISTS usdt_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_no VARCHAR(32) UNIQUE NOT NULL,
       user_id INTEGER NOT NULL,
@@ -34,7 +34,7 @@ const ensureTables = () => {
       confirmed_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+    )`).run();
   } catch (e) {
     console.error('[Wallet] ensureTables error:', e);
   }
