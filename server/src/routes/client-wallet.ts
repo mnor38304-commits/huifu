@@ -7,9 +7,12 @@ const router = Router();
 // 所有路由需要登录
 router.use(authMiddleware);
 
+// 获取当前用户ID的辅助函数
+const getUserId = (req: any) => req.user?.userId;
+
 // ── 获取用户钱包信息 ─────────────────────────────────────────
 router.get('/info', (req, res) => {
-  const userId = (req as any).userId;
+  const userId = getUserId(req);
 
   // 获取或创建钱包
   let wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
@@ -50,7 +53,7 @@ router.get('/info', (req, res) => {
 
 // ── 获取充值地址 ─────────────────────────────────────────────
 router.get('/address', async (req, res) => {
-  const userId = (req as any).userId;
+  const userId = getUserId(req);
   const { network = 'TRC20' } = req.query;
 
   const addresses: Record<string, string> = {
@@ -108,7 +111,7 @@ router.get('/address', async (req, res) => {
 
 // ── 获取充值订单列表 ─────────────────────────────────────────
 router.get('/deposits', (req, res) => {
-  const userId = (req as any).userId;
+  const userId = getUserId(req);
   const { page = 1, pageSize = 20 } = req.query;
 
   const offset = (Number(page) - 1) * Number(pageSize);
@@ -130,7 +133,7 @@ router.get('/deposits', (req, res) => {
 
 // ── 创建充值订单（C2C买币）───────────────────────────────────
 router.post('/deposit/c2c', async (req, res) => {
-  const userId = (req as any).userId;
+  const userId = getUserId(req);
   const { amountUsdt, network = 'TRC20' } = req.body;
 
   if (!amountUsdt || amountUsdt <= 0) {
@@ -211,7 +214,7 @@ router.post('/deposit/c2c', async (req, res) => {
 
 // ── 获取充值订单详情 ─────────────────────────────────────────
 router.get('/deposits/:id', (req, res) => {
-  const userId = (req as any).userId;
+  const userId = getUserId(req);
   const order = db.prepare('SELECT * FROM usdt_orders WHERE id = ? AND user_id = ?').get(req.params.id, userId);
 
   if (!order) {
@@ -223,7 +226,7 @@ router.get('/deposits/:id', (req, res) => {
 
 // ── 获取钱包流水记录 ─────────────────────────────────────────
 router.get('/records', (req, res) => {
-  const userId = (req as any).userId;
+  const userId = getUserId(req);
   const { page = 1, pageSize = 20, type } = req.query;
 
   let whereClause = 'WHERE user_id = ?';
@@ -253,7 +256,7 @@ router.get('/records', (req, res) => {
 
 // ── 获取钱包统计 ─────────────────────────────────────────────
 router.get('/stats', (req, res) => {
-  const userId = (req as any).userId;
+  const userId = getUserId(req);
 
   // 获取钱包余额
   let wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
