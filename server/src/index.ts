@@ -12,7 +12,7 @@ import cardRoutes from './routes/cards';
 import transactionRoutes from './routes/transactions';
 import billRoutes from './routes/bills';
 import noticeRoutes from './routes/notices';
-import walletRoutes from './routes/client-wallet';
+import walletRoutes, { initWalletTables } from './routes/client-wallet';
 
 // 管理员路由
 import adminAuthRoutes from './routes/admin-auth';
@@ -56,8 +56,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 async function start() {
   await initDatabase();
-
-
+  
+  // 初始化钱包表
+  initWalletTables();
 
   // 初始化默认 BIN
   const binCount = (db.prepare('SELECT COUNT(*) as c FROM card_bins').get() as any).c;

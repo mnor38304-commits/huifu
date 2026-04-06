@@ -1,13 +1,16 @@
 import { Router } from 'express';
-import db from '../db';
+import db, { getDb } from '../db';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
-// 确保必要的表存在
-const ensureTables = () => {
+// 导出初始化函数，由 index.ts 在数据库初始化后调用
+export const initWalletTables = () => {
   try {
-    db.prepare(`CREATE TABLE IF NOT EXISTS wallets (
+    const database = getDb();
+    
+    // 创建钱包表
+    database.run(`CREATE TABLE IF NOT EXISTS wallets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER UNIQUE NOT NULL,
       balance_usd REAL DEFAULT 0,
@@ -16,9 +19,10 @@ const ensureTables = () => {
       currency VARCHAR(10) DEFAULT 'USD',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`).run();
+    )`);
     
-    db.prepare(`CREATE TABLE IF NOT EXISTS usdt_orders (
+    // 创建USDT订单表
+    database.run(`CREATE TABLE IF NOT EXISTS usdt_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_no VARCHAR(32) UNIQUE NOT NULL,
       user_id INTEGER NOT NULL,
@@ -34,12 +38,20 @@ const ensureTables = () => {
       confirmed_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`).run();
+    )`);
+    
+    // 迁移：为已存在的表添加缺失的列
+    try {
+      database.run(`ALTER TABLE usdt_orders ADD COLUMN dogpay_order_id VARCHAR(100)`);
+    } catch (e: any) {
+      // 列可能已存在，忽略错误
+    }
+    
+    console.log('[Wallet] Tables initialized');
   } catch (e) {
-    console.error('[Wallet] ensureTables error:', e);
+    console.error('[Wallet] initWalletTables error:', e);
   }
 };
-ensureTables();
 
 // 所有路由需要登录
 router.use(authMiddleware);
