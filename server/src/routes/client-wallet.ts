@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db';
-import { authMiddleware } from './auth-resend-v2';
+import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
