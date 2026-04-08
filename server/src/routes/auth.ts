@@ -1,14 +1,75 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import db from '../db';
-import { authMiddleware, generateToken, AuthRequest } from '../middleware/auth';
+import { authMiddleware, generateToken, AuthRequest, setAuthCookie, clearAuthCookie } from '../middleware/auth';
 import { ApiResponse, User } from '../types';
 import { sendEmail, verificationCodeTemplate, regSuccessTemplate } from '../mail';
 
 const router = Router();
 
 // 验证码存储 (生产环境应使用 Redis)
+// ✅ FIX: 增加定期清理过期验证码，防止 Map 无限膨胀
 const verificationCodes = new Map<string, { code: string; expires: number }>();
+
+// ✅ FIX: 验证码发送频率限制，防止短信/邮箱轰炸攻击
+// 限制维度：每个账号（手机/邮箱）+ 每个 IP
+const rateLimitMap = new Map<string, { minuteCount: number; dayCount: number; lastMinute: number; lastDay: number }>();
+const RATE_LIMIT_MINUTE = 60 * 1000;   // 每分钟最多1次
+const RATE_LIMIT_DAY   = 24 * 60 * 60 * 1000; // 每天最多5次
+const MAX_PER_DAY = 5;
+const MAX_PER_MINUTE = 1;
+
+function checkRateLimit(key: string): { allowed: boolean; reason?: string } {
+  const now = Date.now();
+  const record = rateLimitMap.get(key);
+
+  if (!record) {
+    rateLimitMap.set(key, { minuteCount: 1, dayCount: 1, lastMinute: now, lastDay: now });
+    return { allowed: true };
+  }
+
+  // 分钟级重置
+  if (now - record.lastMinute > RATE_LIMIT_MINUTE) {
+    record.minuteCount = 0;
+    record.lastMinute = now;
+  }
+  // 天级重置
+  if (now - record.lastDay > RATE_LIMIT_DAY) {
+    record.dayCount = 0;
+    record.lastDay = now;
+  }
+
+  if (record.minuteCount >= MAX_PER_MINUTE) {
+    return { allowed: false, reason: '发送过于频繁，请1分钟后再试' };
+  }
+  if (record.dayCount >= MAX_PER_DAY) {
+    return { allowed: false, reason: `今日发送次数已达上限（${MAX_PER_DAY}次），请明天再试或联系客服` };
+  }
+
+  record.minuteCount++;
+  record.dayCount++;
+  return { allowed: true };
+}
+
+// 每 10 分钟清理一次过期频率限制记录
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of rateLimitMap.entries()) {
+    if (now - record.lastDay > RATE_LIMIT_DAY * 2) {
+      rateLimitMap.delete(key);
+    }
+  }
+}, 10 * 60 * 1000);
+
+// 每 5 分钟清理一次过期验证码
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of verificationCodes.entries()) {
+    if (entry.expires < now) {
+      verificationCodes.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
 
 // 生成用户编号
 function generateUserNo(): string {
@@ -26,6 +87,19 @@ router.post('/send-sms', (req, res: Response<ApiResponse>) => {
     return res.json({ code: 400, message: '请输入手机号', timestamp: Date.now() });
   }
 
+  // ✅ FIX: 频率限制 - 按手机号限制
+  const phoneCheck = checkRateLimit(`sms:${phone}`);
+  if (!phoneCheck.allowed) {
+    return res.json({ code: 429, message: phoneCheck.reason, timestamp: Date.now() });
+  }
+
+  // ✅ FIX: 频率限制 - 按 IP 限制（防止同一 IP 轰炸多个号码）
+  const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
+  const ipCheck = checkRateLimit(`ip:${clientIp}`);
+  if (!ipCheck.allowed) {
+    return res.json({ code: 429, message: `请求过于频繁，请稍后再试（IP: ${clientIp}）`, timestamp: Date.now() });
+  }
+
   const code = String(Math.floor(100000 + Math.random() * 900000));
   verificationCodes.set(phone, { code, expires: Date.now() + 10 * 60 * 1000 });
 
@@ -40,6 +114,19 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
 
   if (!email) {
     return res.json({ code: 400, message: '请输入邮箱', timestamp: Date.now() });
+  }
+
+  // ✅ FIX: 频率限制 - 按邮箱限制
+  const emailCheck = checkRateLimit(`email:${email}`);
+  if (!emailCheck.allowed) {
+    return res.json({ code: 429, message: emailCheck.reason, timestamp: Date.now() });
+  }
+
+  // ✅ FIX: 频率限制 - 按 IP 限制
+  const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
+  const ipCheck = checkRateLimit(`ip:${clientIp}`);
+  if (!ipCheck.allowed) {
+    return res.json({ code: 429, message: `请求过于频繁，请稍后再试（IP: ${clientIp}）`, timestamp: Date.now() });
   }
 
   const code = String(Math.floor(100000 + Math.random() * 900000));
@@ -106,6 +193,9 @@ router.post('/register', async (req, res: Response<ApiResponse>) => {
 
   verificationCodes.delete(account);
 
+  // ✅ FIX: 登录成功后写入 httpOnly Cookie，防止 XSS 窃取 token
+  setAuthCookie(res, token);
+
   // 注册成功 - 发送邮件通知（不阻塞注册流程）
   if (email) {
     void sendEmail({
@@ -120,7 +210,7 @@ router.post('/register', async (req, res: Response<ApiResponse>) => {
   res.json({
     code: 0,
     message: '注册成功',
-    data: { token, userNo },
+    data: { userNo },
     timestamp: Date.now()
   });
 });
@@ -150,10 +240,13 @@ router.post('/login', async (req, res: Response<ApiResponse>) => {
 
   const token = generateToken({ userId: user.id, userNo: user.user_no });
 
+  // ✅ FIX: 登录成功后写入 httpOnly Cookie，防止 XSS 窃取 token
+  setAuthCookie(res, token);
+
   res.json({
     code: 0,
     message: '登录成功',
-    data: { token, userNo: user.user_no },
+    data: { userNo: user.user_no },
     timestamp: Date.now()
   });
 });
@@ -161,6 +254,11 @@ router.post('/login', async (req, res: Response<ApiResponse>) => {
 // 重置密码（真实邮件通知）
 router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
   const { account, code, newPassword } = req.body;
+
+  // ✅ FIX: 新密码强度验证，防止重置为弱密码
+  if (!newPassword || newPassword.length < 6) {
+    return res.json({ code: 400, message: '新密码至少需要6位', timestamp: Date.now() });
+  }
 
   const storedCode = verificationCodes.get(account);
   if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
@@ -209,14 +307,16 @@ router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
 });
 
 // 退出登录
-router.post('/logout', authMiddleware, (req, res: Response<ApiResponse>) => {
+router.post('/logout', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  // ✅ FIX: 退出时清除 httpOnly Cookie，后端主动失效
+  clearAuthCookie(res);
   res.json({ code: 0, message: '退出成功', timestamp: Date.now() });
 });
 
 // 获取当前用户信息
 router.get('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   const user = db.prepare(`
-    SELECT id, user_no, phone, email, status, kyc_status, created_at 
+    SELECT id, user_no, phone, email, status, kyc_status, created_at
     FROM users WHERE id = ?
   `).get(req.user!.userId);
 
@@ -228,8 +328,30 @@ router.get('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>)
 });
 
 // 更新用户信息
+// ✅ FIX: 补全空实现，实际写入数据库
 router.put('/me', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   const { nickname, avatar } = req.body;
+
+  const updates: string[] = [];
+  const params: any[] = [];
+
+  if (nickname !== undefined) {
+    updates.push('nickname = ?');
+    params.push(nickname);
+  }
+  if (avatar !== undefined) {
+    updates.push('avatar = ?');
+    params.push(avatar);
+  }
+
+  if (updates.length === 0) {
+    return res.json({ code: 0, message: '没有需要更新的字段', timestamp: Date.now() });
+  }
+
+  updates.push('updated_at = CURRENT_TIMESTAMP');
+  params.push(req.user!.userId);
+
+  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
   res.json({ code: 0, message: '更新成功', timestamp: Date.now() });
 });
