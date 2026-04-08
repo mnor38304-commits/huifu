@@ -90,7 +90,7 @@ router.post('/send-sms', (req, res: Response<ApiResponse>) => {
   // ✅ FIX: 频率限制 - 按手机号限制
   const phoneCheck = checkRateLimit(`sms:${phone}`);
   if (!phoneCheck.allowed) {
-    return res.json({ code: 429, message: phoneCheck.reason, timestamp: Date.now() });
+    return res.json({ code: 429, message: phoneCheck.reason!, timestamp: Date.now() });
   }
 
   // ✅ FIX: 频率限制 - 按 IP 限制（防止同一 IP 轰炸多个号码）
@@ -119,7 +119,7 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
   // ✅ FIX: 频率限制 - 按邮箱限制
   const emailCheck = checkRateLimit(`email:${email}`);
   if (!emailCheck.allowed) {
-    return res.json({ code: 429, message: emailCheck.reason, timestamp: Date.now() });
+    return res.json({ code: 429, message: emailCheck.reason!, timestamp: Date.now() });
   }
 
   // ✅ FIX: 频率限制 - 按 IP 限制
