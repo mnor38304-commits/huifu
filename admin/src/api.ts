@@ -1,22 +1,36 @@
 import axios from 'axios'
 
-const BASE = axios.create({ baseURL: '/api/admin', timeout: 10000 })
-
-BASE.interceptors.request.use(config => {
-  const t = localStorage.getItem('admin_token')
-  if (t) config.headers.Authorization = `Bearer ${t}`
-  return config
+// ✅ FIX: Token 升级为 httpOnly Cookie（后端 admin-auth.ts 写入）
+// 优势：
+// 1. httpOnly: JS 无法读写，XSS 攻击无法窃取 token
+// 2. 自动随请求发送，页面刷新不丢失登录状态
+// 3. 后端 logout 时主动清除 Cookie
+const BASE = axios.create({
+  baseURL: '/api/admin',
+  timeout: 10000,
+  withCredentials: true,  // 关键：跨域请求携带 Cookie
 })
+
+// ✅ 不再设置 Authorization Header，Token 完全由 httpOnly Cookie 提供
+BASE.interceptors.request.use(config => config)
+
+// 401 统一处理：清除 Cookie 并跳转登录
 BASE.interceptors.response.use(r => r.data, err => {
   if (err.response?.status === 401) {
-    localStorage.removeItem('admin_token')
+    document.cookie = 'admin_token=; Max-Age=0; path=/';
     window.location.href = '/login'
   }
   return Promise.reject(err)
 })
 
+// ✅ 后端 login 成功后写入 httpOnly Cookie，前端无需手动存储
 export const login = (u, p) => BASE.post('/auth/login', { username: u, password: p })
 export const getAdminInfo = () => BASE.get('/auth/me')
+export const logout = () =>
+  BASE.post('/auth/logout').finally(() => {
+    window.location.href = '/login'
+  })
+
 export const getDashboard = () => BASE.get('/dashboard/stats')
 export const getMerchants = p => BASE.get('/merchants', { params: p })
 export const getMerchantDetail = id => BASE.get(`/merchants/${id}`)
@@ -31,6 +45,7 @@ export const updateBin = (id, d) => BASE.put(`/cards/bins/${id}`, d)
 export const bulkUpdateBinRates = (ids, rates) => BASE.post('/cards/bins/batch-rates', { ids, rates })
 export const getCards = p => BASE.get('/cards/cards', { params: p })
 export const setCardStatus = (id, s, r) => BASE.post(`/cards/cards/${id}/status`, { status: s, reason: r })
+
 // 辅助函数：将camelCase转换为snake_case
 function toSnakeCase(obj: any): any {
   if (obj === null || obj === undefined) return obj
@@ -67,7 +82,7 @@ export const getLogs = p => BASE.get('/ops/logs', { params: p })
 // 商户钱包管理
 export const getWalletList = p => BASE.get('/wallet/list', { params: p })
 export const getWalletDetail = (userId: number) => BASE.get(`/wallet/${userId}`)
-export const adjustWalletBalance = (userId: number, amount: number, type: 'increase' | 'decrease', reason: string) => 
+export const adjustWalletBalance = (userId: number, amount: number, type: 'increase' | 'decrease', reason: string) =>
   BASE.post('/wallet/adjust', { userId, amount, type, reason })
 export const getWalletRecords = (userId: number, p?: any) => BASE.get(`/wallet/records/${userId}`, { params: p })
 
