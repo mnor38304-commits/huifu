@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { ApiResponse, JWTPayload } from '../types';
 
 // 🔒 JWT 密钥必须通过环境变量传入，启动时强制检查
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET as string;
 if (!JWT_SECRET) {
   console.error('❌ FATAL: JWT_SECRET environment variable is required but not set.');
   console.error('   Please set JWT_SECRET in your .env file or environment.');
