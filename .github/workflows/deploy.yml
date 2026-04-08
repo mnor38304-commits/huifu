@@ -6,6 +6,12 @@ on:
       - main
       - master
   workflow_dispatch:
+    inputs:
+      service:
+        description: 'Railway service name'
+        required: false
+        default: 'server'
+
 
 jobs:
   deploy:
@@ -21,4 +27,9 @@ jobs:
       - name: Deploy to Railway
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up
+        run: |
+          if [ -n "${{ github.event.inputs.service }}" ]; then
+            railway up --service ${{ github.event.inputs.service }}
+          else
+            railway up --service server
+          fi
