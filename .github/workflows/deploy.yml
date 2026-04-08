@@ -10,7 +10,7 @@ on:
       service:
         description: 'Railway service name (leave empty to auto-detect)'
         required: false
-        default: '''
+        default: ''
 
 jobs:
   deploy:
@@ -27,10 +27,10 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          airway whoami
-          echo "---DEPLOY_GOING---"
+          railway whoami
+          echo "---DEPLOY_START---"
           if [ -n "${{ github.event.inputs.service }}" ]; then
-            railway up --service '${{ github.event.inputs.service }}'
+            railway up --service "${{ github.event.inputs.service }}"
           else
             railway up
           fi
