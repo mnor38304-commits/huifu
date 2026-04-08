@@ -44,7 +44,7 @@ export function adminAuth(req: AdminRequest, res: Response, next: NextFunction) 
   if (!token) return res.status(401).json({ code: 401, message: '未登录' });
 
   try {
-    req.admin = jwt.verify(token, JWT_SECRET) as any;
+    req.admin = jwt.verify(token, JWT_SECRET) as unknown as { id: number; username: string; role: string };
     next();
   } catch {
     res.status(401).json({ code: 401, message: 'Token无效或已过期' });
