@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import bcrypt from 'bcryptjs';
 import db, { initDatabase } from './db';
@@ -26,10 +27,30 @@ import adminWalletRoutes from './routes/admin-wallet';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// ✅ FIX: CORS 配置白名单，不允许所有来源跨域请求
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',');
+app.use(cors({
+  origin: (origin: string | undefined, callback) => {
+    // 允许没有 Origin 的请求（如 Postman/服务端间调用）
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`[CORS] Blocked request from origin: ${origin}`);
+      callback(new Error(`Origin ${origin} not allowed by CORS policy`));
+    }
+  },
+  credentials: true
+}));
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// ✅ FIX: 静态文件服务使用绝对路径，限制可访问范围防止路径遍历
+const uploadsDir = path.resolve(process.cwd(), 'uploads');
+app.use('/uploads', express.static(uploadsDir, {
+  fallthrough: false,
+  redirect: false,
+}));
 
 // ── 商户端 API ────────────────────────────────────────────────
 app.use('/api/v1/auth', authRoutes);
@@ -90,3 +111,4 @@ async function start() {
 }
 
 start().catch(e => { console.error(e); process.exit(1); });
+
