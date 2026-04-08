@@ -28,7 +28,9 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // ✅ FIX: CORS 配置白名单，不允许所有来源跨域请求
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',');
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map(origin => origin.trim());
 app.use(cors({
   origin: (origin: string | undefined, callback) => {
     // 允许没有 Origin 的请求（如 Postman/服务端间调用）
