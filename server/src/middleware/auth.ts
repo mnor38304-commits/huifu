@@ -77,7 +77,7 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload;
+    const decoded = jwt.verify(token, JWT_SECRET) as unknown as JWTPayload;
     req.user = decoded;
     next();
   } catch (error) {
