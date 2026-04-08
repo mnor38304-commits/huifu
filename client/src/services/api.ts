@@ -1,30 +1,48 @@
 import axios from 'axios'
 
-const api = axios.create({ 
-  baseURL: '/api/v1', 
-  timeout: 10000 
+// ✅ FIX: Token 升级为 httpOnly Cookie（后端 auth.ts / admin-auth.ts 写入）
+// 优势：
+// 1. httpOnly: JS 无法读写，XSS 攻击无法窃取 token
+// 2. 自动随请求发送，页面刷新不丢失登录状态
+// 3. 后端 logout 时主动清除 Cookie
+// 不再需要内存变量或 localStorage，axios 依赖浏览器自动携带 Cookie
+const api = axios.create({
+  baseURL: '/api/v1',
+  timeout: 10000,
+  withCredentials: true,  // 关键：跨域请求携带 Cookie（配合 httpOnly Cookie 方案）
 })
 
-api.interceptors.request.use(config => {
-  const token = localStorage.getItem('token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
+// ✅ 不再设置 Authorization Header，Token 完全由 httpOnly Cookie 提供
+api.interceptors.request.use(config => config)
 
+// 401 统一处理：清除 Cookie 并跳转登录
+// （Cookie 由后端 setAuthCookie 设置，后端 logout 时已清除，
+//   此处兜底防止服务端 Cookie 已过期但前端未感知的情况）
 api.interceptors.response.use(r => r.data, err => {
   if (err.response?.status === 401) {
-    localStorage.removeItem('token')
+    // 明确告知浏览器清除 token cookie（后端 logout 已清，此处双保险）
+    document.cookie = 'vcc_token=; Max-Age=0; path=/';
     window.location.href = '/login'
   }
   return Promise.reject(err)
 })
 
+// ── Auth ─────────────────────────────────────────────────────────────────────
 export const sendSms = (phone: string) => api.post('/auth/send-sms', { phone })
 export const sendEmail = (email: string) => api.post('/auth/send-email', { email })
 export const register = (data: any) => api.post('/auth/register', data)
-export const login = (account: string, password: string) => api.post('/auth/login', { account, password })
-export const logout = () => api.post('/auth/logout')
+export const login = (account: string, password: string) =>
+  // 后端 login 成功后写入 httpOnly Cookie，前端无需手动存储
+  api.post('/auth/login', { account, password })
+export const logout = () => {
+  // 后端 logout 会清除 httpOnly Cookie，前端跳转由响应拦截器处理
+  return api.post('/auth/logout').finally(() => {
+    window.location.href = '/login'
+  })
+}
 export const getUserInfo = () => api.get('/auth/me')
+
+// ── Cards ────────────────────────────────────────────────────────────────────
 export const getCards = (status?: number) => api.get('/cards', { params: { status } })
 export const getAvailableCardBins = () => api.get('/cards/bins/available')
 export const createCard = (data: any) => api.post('/cards', data)
@@ -34,16 +52,24 @@ export const topupCard = (id: number, amount: number) => api.post(`/cards/${id}/
 export const freezeCard = (id: number) => api.post(`/cards/${id}/freeze`)
 export const unfreezeCard = (id: number) => api.post(`/cards/${id}/unfreeze`)
 export const cancelCard = (id: number) => api.post(`/cards/${id}/cancel`)
+
+// ── Transactions ─────────────────────────────────────────────────────────────
 export const getTransactions = (params: any) => api.get('/transactions', { params })
 export const getTransactionDetail = (id: number) => api.get(`/transactions/${id}`)
+
+// ── Bills ────────────────────────────────────────────────────────────────────
 export const getBills = () => api.get('/bills')
 export const getBillDetail = (id: number) => api.get(`/bills/${id}`)
 export const getBillStatistics = () => api.get('/bills/statistics/overview')
+
+// ── Notices ──────────────────────────────────────────────────────────────────
 export const getNotices = (page = 1, pageSize = 10) => api.get('/notices', { params: { page, pageSize } })
+
+// ── KYC ──────────────────────────────────────────────────────────────────────
 export const getKycStatus = () => api.get('/kyc/status')
 export const submitKyc = (data: any) => api.post('/kyc/submit', data)
 
-// 钱包相关
+// ── Wallet ───────────────────────────────────────────────────────────────────
 export const getWalletInfo = () => api.get('/wallet/info')
 export const getWalletStats = () => api.get('/wallet/stats')
 export const getWalletAddress = (network: string) => api.get('/wallet/address', { params: { network } })
