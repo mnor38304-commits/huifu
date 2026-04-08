@@ -94,7 +94,7 @@ router.post('/send-sms', (req, res: Response<ApiResponse>) => {
   }
 
   // ✅ FIX: 频率限制 - 按 IP 限制（防止同一 IP 轰炸多个号码）
-  const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
+  const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim() || '';
   const ipCheck = checkRateLimit(`ip:${clientIp}`);
   if (!ipCheck.allowed) {
     return res.json({ code: 429, message: `请求过于频繁，请稍后再试（IP: ${clientIp}）`, timestamp: Date.now() });
@@ -123,7 +123,7 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
   }
 
   // ✅ FIX: 频率限制 - 按 IP 限制
-  const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim();
+  const clientIp = (req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '').split(',')[0].trim() || '';
   const ipCheck = checkRateLimit(`ip:${clientIp}`);
   if (!ipCheck.allowed) {
     return res.json({ code: 429, message: `请求过于频繁，请稍后再试（IP: ${clientIp}）`, timestamp: Date.now() });
