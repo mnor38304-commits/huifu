@@ -8,10 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: 'Railway service name'
+        description: 'Railway service name (leave empty to auto-detect)'
         required: false
-        default: 'server'
-
+        default: '''
 
 jobs:
   deploy:
@@ -28,8 +27,10 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
+          airway whoami
+          echo "---DEPLOY_GOING---"
           if [ -n "${{ github.event.inputs.service }}" ]; then
-            railway up --service ${{ github.event.inputs.service }}
+            railway up --service '${{ github.event.inputs.service }}'
           else
-            railway up --service server
+            railway up
           fi
