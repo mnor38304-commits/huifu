@@ -28,9 +28,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // ✅ FIX: CORS 配置白名单，不允许所有来源跨域请求
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000')
-  .split(',')
-  .map(origin => origin.trim());
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',');
 app.use(cors({
   origin: (origin: string | undefined, callback) => {
     // 允许没有 Origin 的请求（如 Postman/服务端间调用）
@@ -97,31 +95,13 @@ async function start() {
     console.log('✅ Default BINs created');
   }
 
-  // 初始化默认渠道
+  // 初始化默认渠道（AIRWALLEX / PHOTON / UQPAY）
   const channelCount = (db.prepare('SELECT COUNT(*) as c FROM card_channels').get() as any).c;
   if (channelCount === 0) {
-    db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_base_url,status,config_json) VALUES (?,?,?,1,?)`).run('AIRWALLEX', '空中云汇', 'https://api.airwallex.com', '{"version":"v1"}');
-    db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_base_url,status,config_json) VALUES (?,?,?,1,?)`).run('PHOTON', '光子易', 'https://api.photon.com', '{"version":"v2"}');
-    db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_base_url,status,config_json) VALUES (?,?,?,0,?)`).run('CUSTOM', '自定义渠道', 'https://api.example.com', '{}');
-    console.log('✅ Default channels created');
-  }
-
-  // 从环境变量初始化/更新 DogPay 渠道配置
-  const dogpayApiUrl = process.env.DOGPAY_API_URL || 'https://api.dogpay.com';
-  const dogpayApiKey = process.env.DOGPAY_API_KEY;
-  const dogpayApiSecret = process.env.DOGPAY_API_SECRET;
-  if (dogpayApiKey && dogpayApiSecret) {
-    const existing = db.prepare("SELECT id FROM card_channels WHERE channel_code = 'dogpay'").get();
-    if (existing) {
-      db.prepare(`UPDATE card_channels SET api_key=?, api_secret=?, api_base_url=?, status=1 WHERE channel_code='dogpay'`)
-        .run(dogpayApiKey, dogpayApiSecret, dogpayApiUrl);
-    } else {
-      db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_key,api_secret,api_base_url,status,config_json) VALUES (?,?,?,?,?,1,?)`)
-        .run('dogpay', 'DogPay', dogpayApiKey, dogpayApiSecret, dogpayApiUrl, '{}');
-    }
-    console.log('[DogPay] Channel config initialized from env');
-  } else {
-    console.warn('[DogPay] DOGPAY_API_KEY or DOGPAY_API_SECRET not set - DogPay features will be disabled');
+    db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_base_url,status,config_json,priority) VALUES (?,?,?,1,?,?)`).run('AIRWALLEX', '空中云汇', 'https://api.airwallex.com', '{"version":"v1"}', 10);
+    db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_base_url,status,config_json,priority) VALUES (?,?,?,1,?,?)`).run('PHOTON',    '光子易',   'https://api.photon.com',   '{"version":"v2"}', 20);
+    db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_base_url,status,config_json,priority) VALUES (?,?,?,0,?,?)`).run('UQPAY',     'UQPay 发卡', 'https://api-sandbox.uqpaytech.com', '{"clientId":"","apiSecret":"","depositAddresses":{"trx":"","eth":""}}', 1);
+    console.log('✅ Default channels created (AIRWALLEX / PHOTON / UQPAY)');
   }
 
   app.listen(PORT, () => {
