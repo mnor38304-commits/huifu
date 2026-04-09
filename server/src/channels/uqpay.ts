@@ -1,24 +1,24 @@
 /**
  * UQPay Issuing API SDK
- * 鏂囨。: https://docs.uqpay.com
+ * 文档: https://docs.uqpay.com
  *
  * Base URL:
  *   Sandbox: https://api-sandbox.uqpaytech.com
  *   Production: https://api.uqpaytech.com
  *
- * 璁よ瘉鏂瑰紡:
- *   1. POST /api/v1/connect/token 鈫?鑾峰彇 auth_token (x-auth-token header)
- *   2. 鍚庣画鎵€鏈夎姹傚湪 header 涓紶 x-auth-token
+ * 认证方式:
+ *   1. POST /api/v1/connect/token → 获取 auth_token (x-auth-token header)
+ *   2. 后续所有请求在 header 中传 x-auth-token
  */
 
 import { randomUUID } from 'crypto';
 
-// 鈹€鈹€鈹€ Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface UqPayConfig {
   clientId: string;
   apiKey: string;
-  /** 榛樿 sandbox锛岀敓浜х幆澧冩浛鎹?*/
+  /** 默认 sandbox，生产环境替换 */
   baseUrl?: string;
 }
 
@@ -60,8 +60,8 @@ export interface UqPayCard {
   card_limit: number;
   created_at: string;
   updated_at: string;
-  card_number?: string; // 鏄庢枃鍗″彿浠呭湪鍒涘缓鏃惰繑鍥炰竴娆★紝鍚庣画闇€浠庢笭閬撳钩鍙拌幏鍙?
-  cvv?: string;          // 鍚屼笂
+  card_number?: string; // 明文卡号仅在创建时返回一次，后续需从渠道平台获取
+  cvv?: string;          // 同上
 }
 
 export interface UqPayTransfer {
@@ -75,7 +75,7 @@ export interface UqPayTransfer {
   created_at: string;
 }
 
-// 鈹€鈹€鈹€ SDK 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── SDK ───────────────────────────────────────────────────────────────────────
 
 export class UqPaySDK {
   private clientId: string;
@@ -84,7 +84,7 @@ export class UqPaySDK {
   private _token: string | null = null;
   private _tokenExpiredAt: Date | null = null;
 
-  // cardholder 缂撳瓨锛堝钩鍙板唴鍙垱寤轰竴娆★紝閬垮厤閲嶅锛?
+  // cardholder 缓存（平台内只创建一次，避免重复）
   private _cachedCardholderId: string | null = null;
 
   constructor(config: UqPayConfig) {
@@ -93,10 +93,10 @@ export class UqPaySDK {
     this.baseUrl = config.baseUrl || 'https://api-sandbox.uqpaytech.com';
   }
 
-  // 鈹€鈹€ Private: Token 绠＄悊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── Private: Token 管理 ───────────────────────────────────────────────────
 
   private async ensureToken(): Promise<string> {
-    // token 鍓╀綑 5 鍒嗛挓鍐呮彁鍓嶅埛鏂?
+    // token 剩余 5 分钟内提前刷新
     if (
       this._token &&
       this._tokenExpiredAt &&
@@ -120,17 +120,17 @@ export class UqPaySDK {
 
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`[UqPay] Token 鍒锋柊澶辫触: ${res.status} ${body}`);
+      throw new Error(`[UqPay] Token 刷新失败: ${res.status} ${body}`);
     }
 
     const data: UqPayToken = await res.json() as UqPayToken;
     this._token = data.auth_token;
     this._tokenExpiredAt = new Date(data.expired_at);
-    console.log('[UqPay] Token 鍒锋柊鎴愬姛锛屾湁鏁堣嚦:', data.expired_at);
+    console.log('[UqPay] Token 刷新成功，有效至:', data.expired_at);
     return this._token;
   }
 
-  // 鈹€鈹€ Private: 閫氱敤璇锋眰 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── Private: 通用请求 ────────────────────────────────────────────────────
 
   private async request<T>(
     method: 'GET' | 'POST' | 'PATCH',
@@ -154,9 +154,9 @@ export class UqPaySDK {
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    // 401 鈫?token 杩囨湡锛岄噸鏂拌幏鍙栧悗閲嶈瘯涓€娆?
+    // 401 → token 过期，重新获取后重试一次
     if (res.status === 401) {
-      console.warn('[UqPay] Token 杩囨湡锛岄噸鏂拌幏鍙?..');
+      console.warn('[UqPay] Token 过期，重新获取...');
       this._token = null;
       this._tokenExpiredAt = null;
       const newToken = await this.ensureToken();
@@ -168,27 +168,27 @@ export class UqPaySDK {
       });
       if (!retryRes.ok) {
         const err = await retryRes.text();
-        throw new Error(`[UqPay] 璇锋眰澶辫触: ${retryRes.status} ${err}`);
+        throw new Error(`[UqPay] 请求失败: ${retryRes.status} ${err}`);
       }
       return retryRes.json() as T;
     }
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`[UqPay] 璇锋眰澶辫触: ${res.status} ${err}`);
+      throw new Error(`[UqPay] 请求失败: ${res.status} ${err}`);
     }
 
     return res.json() as T;
   }
 
-  // 鈹€鈹€ 鎸佸崱浜?(Cardholder) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── 持卡人 (Cardholder) ──────────────────────────────────────────────────
 
   /**
-   * 鏍规嵁閭鏌ユ壘宸叉湁鎸佸崱浜?
+   * 根据邮箱查找已有持卡人
    */
   async findCardholderByEmail(email: string): Promise<UqPayCardholder | null> {
-    // UQPay cardholder list API 涓嶆敮鎸佹寜 email 绛涢€夛紝
-    // 閲囩敤鍒楄〃閬嶅巻绛栫暐锛堢敓浜х幆澧冨缓璁嚜琛岀淮鎶ゆ槧灏勮〃锛?
+    // UQPay cardholder list API 不支持按 email 筛选，
+    // 采用列表遍历策略（生产环境建议自行维护映射表）
     const pageSize = 50;
     for (let page = 1; page <= 10; page++) {
       const res = await this.request<{ data: UqPayCardholder[] }>(
@@ -204,7 +204,7 @@ export class UqPaySDK {
   }
 
   /**
-   * 鍒涘缓鎸佸崱浜猴紙骞傜瓑锛屽凡瀛樺湪鍒欒繑鍥炵幇鏈夛級
+   * 创建持卡人（幂等，已存在则返回现有）
    */
   async getOrCreateCardholder(params: {
     email: string;
@@ -216,19 +216,19 @@ export class UqPaySDK {
     nationality?: string;
     gender?: 'MALE' | 'FEMALE';
   }): Promise<UqPayCardholder> {
-    // 鍏堟煡缂撳瓨
+    // 先查缓存
     if (this._cachedCardholderId) {
       return this.getCardholder(this._cachedCardholderId);
     }
 
-    // 鍐嶆煡鍒楄〃
+    // 再查列表
     const existing = await this.findCardholderByEmail(params.email);
     if (existing) {
       this._cachedCardholderId = existing.id;
       return existing;
     }
 
-    // 鍒涘缓鏂版寔鍗′汉
+    // 创建新持卡人
     const created = await this.request<UqPayCardholder>('POST', '/api/v1/issuing/cardholders', {
       email: params.email,
       first_name: params.firstName,
@@ -241,21 +241,21 @@ export class UqPaySDK {
     });
 
     this._cachedCardholderId = created.id;
-    console.log('[UqPay] 鎸佸崱浜哄垱寤烘垚鍔?', created.id);
+    console.log('[UqPay] 持卡人创建成功:', created.id);
     return created;
   }
 
   /**
-   * 鑾峰彇鎸佸崱浜鸿鎯?
+   * 获取持卡人详情
    */
   async getCardholder(cardholderId: string): Promise<UqPayCardholder> {
     return this.request<UqPayCardholder>('GET', `/api/v1/issuing/cardholders/${cardholderId}`);
   }
 
-  // 鈹€鈹€ 鍗′骇鍝?(Card Products) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── 卡产品 (Card Products) ───────────────────────────────────────────────
 
   /**
-   * 鍒楀嚭鍙敤鍗′骇鍝?
+   * 列出可用卡产品
    */
   async listCardProducts(): Promise<UqPayCardProduct[]> {
     const res = await this.request<{ data: UqPayCardProduct[] }>(
@@ -266,7 +266,7 @@ export class UqPaySDK {
   }
 
   /**
-   * 鏍规嵁甯佺鑾峰彇绗竴涓彲鐢ㄥ崱浜у搧ID锛堢紦瀛橈級
+   * 根据币种获取第一个可用卡产品ID（缓存）
    */
   async getCardProductId(currency: string = 'USD'): Promise<string> {
     const products = await this.listCardProducts();
@@ -274,16 +274,16 @@ export class UqPaySDK {
       p => p.currency.toUpperCase() === currency.toUpperCase() && p.status === 'ACTIVE'
     );
     if (!product) {
-      throw new Error(`[UqPay] 鏈壘鍒?${currency} 鍙敤鍗′骇鍝侊紝璇风‘璁?UQPay 璐︽埛宸插紑閫氳甯佺鍙戝崱鏉冮檺`);
+      throw new Error(`[UqPay] 未找到 ${currency} 可用卡产品，请确认 UQPay 账户已开通该币种发卡权限`);
     }
-    console.log('[UqPay] 鍗′骇鍝?', product.id, product.name);
+    console.log('[UqPay] 卡产品:', product.id, product.name);
     return product.id;
   }
 
-  // 鈹€鈹€ 鍗＄墖 (Cards) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── 卡片 (Cards) ─────────────────────────────────────────────────────────
 
   /**
-   * 鍒涘缓铏氭嫙鍗?瀹炰綋鍗?
+   * 创建虚拟卡/实体卡
    */
   async createCard(params: {
     cardholderId: string;
@@ -314,8 +314,8 @@ export class UqPaySDK {
       ...(params.metadata && { metadata: params.metadata }),
     });
 
-    // 娉ㄦ剰: UQPay 鍒涘缓鍗″搷搴斾腑 card_number / cvv 鍙兘涓虹┖锛堝畨鍏ㄥ師鍥狅級锛?
-    // 瀹屾暣鍗￠潰淇℃伅闇€浠?UQPay Dashboard 鎴?webhook 鑾峰彇
+    // 注意: UQPay 创建卡响应中 card_number / cvv 可能为空（安全原因），
+    // 完整卡面信息需从 UQPay Dashboard 或 webhook 获取
     return {
       id: card.id,
       last4: card.last4,
@@ -329,14 +329,14 @@ export class UqPaySDK {
   }
 
   /**
-   * 鑾峰彇鍗＄墖璇︽儏
+   * 获取卡片详情
    */
   async getCard(cardId: string): Promise<UqPayCard> {
     return this.request<UqPayCard>('GET', `/api/v1/issuing/cards/${cardId}`);
   }
 
   /**
-   * 鏇存柊鍗＄墖鐘舵€?
+   * 更新卡片状态
    */
   async updateCardStatus(
     cardId: string,
@@ -348,39 +348,39 @@ export class UqPaySDK {
   }
 
   /**
-   * 鍐荤粨鍗＄墖
+   * 冻结卡片
    */
   async freezeCard(cardId: string): Promise<void> {
     await this.updateCardStatus(cardId, 'FROZEN');
-    console.log('[UqPay] 鍗＄墖宸插喕缁?', cardId);
+    console.log('[UqPay] 卡片已冻结:', cardId);
   }
 
   /**
-   * 瑙ｅ喕鍗＄墖锛堟仮澶嶄负 ACTIVE锛?
+   * 解冻卡片（恢复为 ACTIVE）
    */
   async unfreezeCard(cardId: string): Promise<void> {
     await this.updateCardStatus(cardId, 'ACTIVE');
-    console.log('[UqPay] 鍗＄墖宸茶В鍐?', cardId);
+    console.log('[UqPay] 卡片已解冻:', cardId);
   }
 
   /**
-   * 鍙栨秷鍗＄墖
+   * 取消卡片
    */
   async cancelCard(cardId: string): Promise<void> {
     await this.updateCardStatus(cardId, 'CANCELLED');
-    console.log('[UqPay] 鍗＄墖宸插彇娑?', cardId);
+    console.log('[UqPay] 卡片已取消:', cardId);
   }
 
   /**
-   * 鎸傚け鍗＄墖
+   * 挂失卡片
    */
   async reportLostCard(cardId: string): Promise<void> {
     await this.updateCardStatus(cardId, 'LOST');
-    console.log('[UqPay] 鍗＄墖宸叉寕澶?', cardId);
+    console.log('[UqPay] 卡片已挂失:', cardId);
   }
 
   /**
-   * 鍒楀嚭褰撳墠璐︽埛涓嬬殑鎵€鏈夊崱鐗?
+   * 列出当前账户下的所有卡片
    */
   async listCards(params?: {
     cardholderId?: string;
@@ -398,42 +398,42 @@ export class UqPaySDK {
     return res.data || [];
   }
 
-  // 鈹€鈹€ 閽卞寘鍏呭€?(Wallet / Transfer) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── 钱包充值 (Wallet / Transfer) ─────────────────────────────────────────
 
   /**
-   * 鑾峰彇 UQPay 骞冲彴鐨勫姞瀵嗚揣甯佸厖鍊煎湴鍧€
+   * 获取 UQPay 平台的加密货币充值地址
    *
-   * UQPay 鍙戝崱璐︽埛鍏呭€兼湁涓ょ鏂瑰紡:
-   * 1. 鍔犲瘑璐у竵杞处: 灏?USDT 鍏呭€煎埌骞冲彴鍦?UQPay 鐨勯挶鍖呭湴鍧€锛?
-   *    鐒跺悗閫氳繃 Transfer API 杞叆鍙戝崱璐︽埛
-   * 2. 鐩存帴鍏呭€? 濡傛灉 UQPay 鏀寔 C2C 鍏呭€艰鍗曪紝閫氳繃姝ゆ柟娉曡幏鍙栨敮浠樺湴鍧€
+   * UQPay 发卡账户充值有两种方式:
+   * 1. 加密货币转账: 将 USDT 充值到平台在 UQPay 的钱包地址，
+   *    然后通过 Transfer API 转入发卡账户
+   * 2. 直接充值: 如果 UQPay 支持 C2C 充值订单，通过此方法获取支付地址
    *
-   * 杩斿洖: { address, chain, qrCode? }
+   * 返回: { address, chain, qrCode? }
    */
   async getDepositAddress(chain: string = 'trx'): Promise<{
     address: string;
     chain: string;
     qrCode?: string;
   }> {
-    // UQPay 鏂囨。涓殏鏃犵嫭绔嬬殑铏氭嫙璐у竵鍦板潃 API锛?
-    // 姝ゅ杩斿洖骞冲彴閰嶇疆鐨勯粯璁ゅ厖鍊煎湴鍧€锛堜粠 channel config_json 涓鍙栵級
-    // 鐢熶骇鐜鍙墿灞曚负璋冪敤 UQPay 涓撶敤鐨勯挶鍖呭湴鍧€鎺ュ彛
+    // UQPay 文档中暂无独立的虚拟货币地址 API，
+    // 此处返回平台配置的默认充值地址（从 channel config_json 中读取）
+    // 生产环境可扩展为调用 UQPay 专用的钱包地址接口
     throw new Error(
-      '[UqPay] getDepositAddress 闇€瑕佸钩鍙伴厤缃厖鍊煎湴鍧€銆? +
-      '璇峰湪 card_channels.config_json 涓厤缃?deposit_addresses 瀵硅薄銆? +
-      '绀轰緥: {"trx": "TRC20鍦板潃", "eth": "ERC20鍦板潃", "bnb": "BEP20鍦板潃"}'
+      '[UqPay] getDepositAddress 需要平台配置充值地址。' +
+      '请在 card_channels.config_json 中配置 deposit_addresses 对象。' +
+      '示例: {"trx": "TRC20地址", "eth": "ERC20地址", "bnb": "BEP20地址"}'
     );
   }
 
   /**
-   * 鍒涘缓 C2C 鍏呭€艰鍗?
+   * 创建 C2C 充值订单
    *
-   * UQPay 妯″紡涓嬶紝鍏呭€兼祦绋嬩负:
-   * 1. 鐢ㄦ埛鍚戝钩鍙?UQPay 閽卞寘鍦板潃杞处 USDT
-   * 2. 骞冲彴鐩戝惉閾句笂鍒拌处锛岀‘璁ゅ悗閫氳繃 Transfer API 杞叆鍙戝崱璐︽埛
-   * 3. 姝ゆ柟娉曞垱寤鸿鍗曡褰曞苟杩斿洖鏀粯鍦板潃
+   * UQPay 模式下，充值流程为:
+   * 1. 用户向平台 UQPay 钱包地址转账 USDT
+   * 2. 平台监听链上到账，确认后通过 Transfer API 转入发卡账户
+   * 3. 此方法创建订单记录并返回支付地址
    *
-   * 杩斿洖: { orderId, payAddress, amount, token, network, expireAt }
+   * 返回: { orderId, payAddress, amount, token, network, expireAt }
    */
   async createC2COrder(params: {
     amount: number;
@@ -448,7 +448,7 @@ export class UqPaySDK {
     network: string;
     expireAt: string;
   }> {
-    // 鑾峰彇鍏呭€煎湴鍧€锛堥渶骞冲彴鍦?config_json 涓厤缃級
+    // 获取充值地址（需平台在 config_json 中配置）
     const chainMap: Record<string, string> = {
       trx: 'TRC20',
       eth: 'ERC20',
@@ -457,12 +457,12 @@ export class UqPaySDK {
     const chain = params.network || 'trx';
     const chainName = chainMap[chain] || 'TRC20';
 
-    // 浠?SDK 鍐呴儴閰嶇疆鐨勫钩鍙板厖鍊煎湴鍧€璇诲彇锛堝彲鍦ㄥ疄渚嬪寲鏃舵敞鍏ワ級
+    // 从 SDK 内部配置的平台充值地址读取（可在实例化时注入）
     const depositAddress = (this as any)._platformDepositAddresses?.[chain];
     if (!depositAddress) {
       throw new Error(
-        `[UqPay] 骞冲彴鏈厤缃?${chainName} 鍏呭€煎湴鍧€銆俙 +
-        `璇峰湪 card_channels.config_json 涓厤缃?deposit_addresses.${chain}`
+        `[UqPay] 平台未配置 ${chainName} 充值地址。` +
+        `请在 card_channels.config_json 中配置 deposit_addresses.${chain}`
       );
     }
 
@@ -480,12 +480,12 @@ export class UqPaySDK {
   }
 
   /**
-   * 浠庡钩鍙伴挶鍖呭悜鍙戝崱璐︽埛杞处锛堝厖鍊肩‘璁ゅ悗璋冪敤锛?
+   * 从平台钱包向发卡账户转账（充值确认后调用）
    *
-   * @param sourceAccountId 婧愯处鎴凤紙骞冲彴 UQPay 璐︽埛锛?
-   * @param targetAccountId 鐩爣璐︽埛锛堟寔鍗′汉鍙戝崱璐︽埛锛?
-   * @param amount 閲戦
-   * @param currency 甯佺
+   * @param sourceAccountId 源账户（平台 UQPay 账户）
+   * @param targetAccountId 目标账户（持卡人发卡账户）
+   * @param amount 金额
+   * @param currency 币种
    */
   async transferToCard(
     sourceAccountId: string,
@@ -503,7 +503,7 @@ export class UqPaySDK {
   }
 
   /**
-   * 鑾峰彇 UQPay 璐︽埛鍒楄〃锛堢敤浜庤幏鍙?platform account_id锛?
+   * 获取 UQPay 账户列表（用于获取 platform account_id）
    */
   async listAccounts(): Promise<Array<{ account_id: string; name: string; currency: string }>> {
     const res = await this.request<{ data: Array<{ account_id: string; name: string; currency: string }> }>(
@@ -513,10 +513,52 @@ export class UqPaySDK {
     return res.data || [];
   }
 
-  // 鈹€鈹€ 宸ュ叿鏂规硶 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── Secure iFrame / PAN Token ────────────────────────────────────────────
 
   /**
-   * 璇婃柇鎺ュ彛: 妫€鏌?SDK 閰嶇疆鏄惁姝ｇ‘
+   * 为指定卡片生成一次性 PAN Token，用于 Secure iFrame 安全展示卡面信息
+   *
+   * API: POST /api/v1/issuing/cards/{card_id}/token
+   * 文档: https://docs.uqpay.com/docs/secure-iframe-guide
+   *
+   * Token 有效期 60 秒，仅可使用一次
+   */
+  async getPanToken(cardId: string): Promise<{
+    token: string;
+    expiresIn: number;
+    expiresAt: string;
+  }> {
+    const res = await this.request<{ token: string; expires_in: number; expires_at: string }>(
+      'POST',
+      `/api/v1/issuing/cards/${cardId}/token`
+    );
+    return {
+      token: res.token,
+      expiresIn: res.expires_in,
+      expiresAt: res.expires_at,
+    };
+  }
+
+  /**
+   * 构建 Secure iFrame URL
+   *
+   * 域名:
+   *   Sandbox: https://embedded-sandbox.uqpaytech.com
+   *   Production: https://embedded.uqpay.com
+   *
+   * URL 格式: {iframe_domain}/iframe/card?token={pan_token}&cardId={card_id}&lang={lang}
+   */
+  buildSecureIframeUrl(panToken: string, cardId: string, lang: string = 'zh'): string {
+    const iframeDomain = this.baseUrl.includes('sandbox')
+      ? 'https://embedded-sandbox.uqpaytech.com'
+      : 'https://embedded.uqpay.com';
+    return `${iframeDomain}/iframe/card?token=${panToken}&cardId=${cardId}&lang=${lang}`;
+  }
+
+  // ── 工具方法 ─────────────────────────────────────────────────────────────
+
+  /**
+   * 诊断接口: 检查 SDK 配置是否正确
    */
   async diagnose(): Promise<{
     tokenOk: boolean;
