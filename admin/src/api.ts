@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 // ✅ FIX: Token 升级为 httpOnly Cookie（后端 admin-auth.ts 写入）
 // 优势：
@@ -64,6 +64,22 @@ export const createChannel = d => BASE.post('/cards/channels', toSnakeCase(d))
 export const updateChannel = (id, d) => BASE.put(`/cards/channels/${id}`, toSnakeCase(d))
 // 同步DogPay渠道的BIN
 export const syncDogPayBins = () => BASE.post('/cards/channels/dogpay/sync-bins')
+
+// ── 持卡人管理（DogPay 渠道）────────────────────────────────────────────────
+export const getCardholders = p => BASE.get('/cards/cardholders', { params: p })
+export const getCardholderDetail = (id: number | string) => BASE.get(`/cards/cardholders/${id}`)
+export const createCardholder = d => BASE.post('/cards/cardholders', {
+  firstName: d.firstName,
+  lastName: d.lastName,
+  email: d.email,
+  phone: d.phone || '',
+  countryCode: d.countryCode || 'US',
+  idType: d.idType ?? 0,
+  idNumber: d.idNumber || '',
+})
+export const updateCardholderStatus = (id: number | string, status: 'ACTIVE' | 'DISABLED') =>
+  BASE.put(`/cards/cardholders/${id}/status`, { status })
+export const syncCardholders = () => BASE.post('/cards/cardholders/sync')
 export const getUsdtOrders = p => BASE.get('/usdt/orders', { params: p })
 export const confirmUsdt = (id, tx) => BASE.post(`/usdt/orders/${id}/confirm`, { txHash: tx })
 export const getUsdtStats = () => BASE.get('/usdt/stats')
