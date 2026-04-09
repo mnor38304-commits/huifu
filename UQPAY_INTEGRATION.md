@@ -1,27 +1,27 @@
-# UQPay Issuing API 瀵规帴鏂囨。
+# UQPay Issuing API 对接文档
 
-**鏇存柊鏃堕棿**: 2026-04-09
-**API 鐗堟湰**: v1.6.0
-**鏂囨。**: https://docs.uqpay.com
+**更新时间**: 2026-04-09
+**API 版本**: v1.6.0
+**文档**: https://docs.uqpay.com
 
 ---
 
-## 1. 姒傝堪
+## 1. 概述
 
-UQPay 鏄竴涓彂鍗★紙Issuing锛夊钩鍙帮紝鎻愪緵铏氭嫙鍗?瀹炰綋鍗＄鐞嗐€並YC銆侀挶鍖呭厖鍊肩瓑鑳藉姏銆傛湰绯荤粺閫氳繃 `server/src/channels/uqpay.ts` 涓殑 `UqPaySDK` 涓庡叾瀵规帴銆?
+UQPay 是一个发卡（Issuing）平台，提供虚拟卡/实体卡管理、KYC、钱包充值等能力。本系统通过 `server/src/channels/uqpay.ts` 中的 `UqPaySDK` 与其对接。
 
-### 鏍稿績 API 绔偣
+### 核心 API 端点
 
-| 鐜 | Base URL |
+| 环境 | Base URL |
 |------|----------|
 | Sandbox | `https://api-sandbox.uqpaytech.com` |
 | Production | `https://api.uqpaytech.com` |
 
 ---
 
-## 2. 璁よ瘉鏂瑰紡
+## 2. 认证方式
 
-### 鑾峰彇 Access Token
+### 获取 Access Token
 
 ```
 POST /api/v1/connect/token
@@ -30,7 +30,7 @@ Header:
   x-api-key:   <your_api_key>
 ```
 
-杩斿洖锛?
+返回：
 ```json
 {
   "auth_token": "eyJ...",
@@ -38,26 +38,26 @@ Header:
 }
 ```
 
-Token 鏈夋晥鏈?30 鍒嗛挓锛堢敓浜х幆澧冿級銆俙UqPaySDK` 鑷姩绠＄悊 token 鍒锋柊锛堟彁鍓?5 鍒嗛挓鍒锋柊锛夈€?
+Token 有效期 30 分钟（生产环境）。`UqPaySDK` 自动管理 token 刷新（提前 5 分钟刷新）。
 
-鍚庣画鎵€鏈夎姹?Header 涓甫锛?
+后续所有请求 Header 中带：
 ```
 x-auth-token: <auth_token>
 ```
 
 ---
 
-## 3. 宸插疄鐜扮殑 API
+## 3. 已实现的 API
 
-### 3.1 鎸佸崱浜?(Cardholder)
+### 3.1 持卡人 (Cardholder)
 
-| 鎿嶄綔 | 绔偣 | 鏂规硶 |
+| 操作 | 端点 | 方法 |
 |------|------|------|
-| 鍒涘缓鎸佸崱浜?| `/api/v1/issuing/cardholders` | POST |
-| 鑾峰彇鎸佸崱浜鸿鎯?| `/api/v1/issuing/cardholders/{id}` | GET |
-| 鍒楀嚭鎸佸崱浜?| `/api/v1/issuing/cardholders` | GET |
+| 创建持卡人 | `/api/v1/issuing/cardholders` | POST |
+| 获取持卡人详情 | `/api/v1/issuing/cardholders/{id}` | GET |
+| 列出持卡人 | `/api/v1/issuing/cardholders` | GET |
 
-**鍒涘缓鎸佸崱浜鸿姹備綋**锛?
+**创建持卡人请求体**：
 ```json
 {
   "email": "user@example.com",
@@ -69,9 +69,9 @@ x-auth-token: <auth_token>
 }
 ```
 
-> 鈿狅笍 **骞傜瓑鎬?*: 姣忔璇锋眰蹇呴』甯?`x-idempotency-key`锛圲UID锛夛紝闃叉閲嶅鍒涘缓銆?
+> ⚠️ **幂等性**: 每次请求必须带 `x-idempotency-key`（UUID），防止重复创建。
 
-**SDK 鏂规硶**锛?
+**SDK 方法**：
 ```ts
 await sdk.getOrCreateCardholder({
   email: user.email,
@@ -85,42 +85,42 @@ await sdk.getOrCreateCardholder({
 
 ---
 
-### 3.2 鍗′骇鍝?(Card Products)
+### 3.2 卡产品 (Card Products)
 
-| 鎿嶄綔 | 绔偣 | 鏂规硶 |
+| 操作 | 端点 | 方法 |
 |------|------|------|
-| 鍒楀嚭鍗′骇鍝?| `/api/v1/issuing/products?page_size=100&page_number=1` | GET |
+| 列出卡产品 | `/api/v1/issuing/products?page_size=100&page_number=1` | GET |
 
-杩斿洖姣忎釜浜у搧鐨?`id`锛堝嵆 `card_product_id`锛夛紝鏄垱寤哄崱鐗囩殑蹇呴渶鍙傛暟銆?
+返回每个产品的 `id`（即 `card_product_id`），是创建卡片的必需参数。
 
-**SDK 鏂规硶**锛?
+**SDK 方法**：
 ```ts
-// 鑷姩鏌ユ壘 USD 鍙敤浜у搧
+// 自动查找 USD 可用产品
 const productId = await sdk.getCardProductId('USD');
 ```
 
 ---
 
-### 3.3 鍗＄墖绠＄悊 (Cards)
+### 3.3 卡片管理 (Cards)
 
-| 鎿嶄綔 | 绔偣 | 鏂规硶 |
+| 操作 | 端点 | 方法 |
 |------|------|------|
-| 鍒涘缓鍗＄墖 | `/api/v1/issuing/cards` | POST |
-| 鑾峰彇鍗＄墖璇︽儏 | `/api/v1/issuing/cards/{id}` | GET |
-| 鏇存柊鍗＄墖鐘舵€?| `/api/v1/issuing/cards/{id}` | POST |
-| 鍒楀嚭鎵€鏈夊崱鐗?| `/api/v1/issuing/cards` | GET |
+| 创建卡片 | `/api/v1/issuing/cards` | POST |
+| 获取卡片详情 | `/api/v1/issuing/cards/{id}` | GET |
+| 更新卡片状态 | `/api/v1/issuing/cards/{id}` | POST |
+| 列出所有卡片 | `/api/v1/issuing/cards` | GET |
 
-**鍗＄墖鐘舵€佹灇涓?*锛?
-- `PENDING` - 寰呭鐞?
-- `ACTIVE` - 婵€娲?
-- `FROZEN` - 鍐荤粨
-- `BLOCKED` - 宸插皝閿?
-- `CANCELLED` - 宸插彇娑?
-- `LOST` - 鎸傚け
-- `STOLEN` - 琚洍
-- `FAILED` - 澶辫触
+**卡片状态枚举**：
+- `PENDING` - 待处理
+- `ACTIVE` - 激活
+- `FROZEN` - 冻结
+- `BLOCKED` - 已封锁
+- `CANCELLED` - 已取消
+- `LOST` - 挂失
+- `STOLEN` - 被盗
+- `FAILED` - 失败
 
-**鍒涘缓鍗＄墖璇锋眰浣?*锛?
+**创建卡片请求体**：
 ```json
 {
   "cardholder_id": "<cardholder_uuid>",
@@ -132,16 +132,16 @@ const productId = await sdk.getCardProductId('USD');
 }
 ```
 
-**鏇存柊鍗＄墖鐘舵€侊紙鍐荤粨/瑙ｅ喕/鍙栨秷锛?*锛?
+**更新卡片状态（冻结/解冻/取消）**：
 ```json
 {
   "card_status": "FROZEN"
 }
 ```
 
-**SDK 鏂规硶**锛?
+**SDK 方法**：
 ```ts
-// 鍒涘缓鍗?
+// 创建卡
 const card = await sdk.createCard({
   cardholderId: cardholderId,
   cardProductId: productId,
@@ -150,44 +150,148 @@ const card = await sdk.createCard({
   cardType: 'virtual',
 });
 
-// 鍐荤粨
+// 冻结
 await sdk.freezeCard(cardId);
 
-// 瑙ｅ喕
+// 解冻
 await sdk.unfreezeCard(cardId);
 
-// 鍙栨秷
+// 取消
 await sdk.cancelCard(cardId);
 ```
 
-> 鈿狅笍 **PCI DSS 鍚堣**: UQPay API 閫氬父涓嶅湪鍒涘缓鍝嶅簲涓繑鍥炴槑鏂囧崱鍙?CVV銆傚畬鏁村崱闈俊鎭渶浠?UQPay Dashboard 鑾峰彇鎴栭€氳繃 Webhook 鎺ユ敹銆?
+> ⚠️ **PCI DSS 合规**: UQPay API 创建卡后不返回明文卡号/CVV（安全设计）。通过 Secure iFrame 安全展示卡面信息（见 3.5 节）。
 
 ---
 
-### 3.4 杞处 (Transfer) 鈥?閽卞寘鍏呭€?
+### 3.4 Secure iFrame — 安全展示卡面信息
 
-| 鎿嶄綔 | 绔偣 | 鏂规硶 |
-|------|------|------|
-| 鍒涘缓杞处 | `/api/v1/transfer` | POST |
-| 杞处鍒楄〃 | `/api/v1/transfer` | GET |
+**文档**: https://docs.uqpay.com/docs/secure-iframe-guide
 
-**鍏呭€兼祦绋?*锛?
-1. 鐢ㄦ埛鍚戝钩鍙板湪 UQPay 鐨勯挶鍖呭湴鍧€杞处 USDT
-2. 骞冲彴鐩戝惉閾句笂鍒拌处锛堥€氳繃 Webhook 鎴栬疆璇級
-3. 纭鍚庤皟鐢?Transfer API 灏嗚祫閲戣浆鍏ュ彂鍗¤处鎴?
+PCI DSS 合规方案：通过一次性 PAN Token + 嵌入式 iFrame，用户无需在 API 响应中传输明文卡号，即可安全查看完整卡号/CVV/有效期。
 
-**鍒涘缓杞处璇锋眰浣?*锛?
+#### 流程
+
+```
+1. POST /api/v1/cards/{id}/pan-token
+   → 后端调用 UQPay API 创建 PAN Token
+
+2. 后端返回 iframeUrl（有效期 60 秒，仅可使用一次）
+
+3. 前端嵌入 iFrame：
+   <iframe src="{iframeUrl}" width="480" height="300" frameborder="0"></iframe>
+
+4. 用户在 iFrame 内查看完整卡号、有效期、CVV
+```
+
+#### API 端点
+
+```
+POST /api/v1/issuing/cards/{card_id}/token
+
+Header:
+  x-auth-token: <auth_token>
+  Accept: application/json
+  x-idempotency-key: <uuid>
+```
+
+返回：
 ```json
 {
-  "source_account_id": "<骞冲彴璐︽埛ID>",
-  "target_account_id": "<鎸佸崱浜鸿处鎴稩D>",
+  "token": "pan_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expires_in": 60,
+  "expires_at": "2025-11-13T10:31:00Z"
+}
+```
+
+#### iFrame URL 格式
+
+```
+{iframe_domain}/iframe/card?token={pan_token}&cardId={card_id}&lang={lang}
+
+# 示例
+https://embedded-sandbox.uqpaytech.com/iframe/card?token=pan_xxx&cardId=7242a504-...&lang=zh
+```
+
+| 环境 | iframe_domain |
+|------|--------------|
+| Sandbox | `https://embedded-sandbox.uqpaytech.com` |
+| Production | `https://embedded.uqpay.com` |
+
+#### SDK 方法
+
+```ts
+// 生成 PAN Token
+const { token, expiresIn, expiresAt } = await sdk.getPanToken(cardId);
+
+// 构建可直接使用的 iFrame URL
+const iframeUrl = sdk.buildSecureIframeUrl(token, cardId, 'zh');
+```
+
+#### 前端嵌入示例
+
+```html
+<!-- 开卡成功后，前端调用 GET /api/v1/cards/{id}/pan-token -->
+<!-- 将返回的 iframeUrl 设置为 iframe src -->
+
+<template>
+  <div v-if="iframeUrl">
+    <p>有效期：{{ expiresIn }}秒，请在到期前完成查看</p>
+    <iframe
+      :src="iframeUrl"
+      width="480"
+      height="320"
+      frameborder="0"
+      allowtransparency="true"
+    ></iframe>
+  </div>
+  <div v-else>
+    <button @click="fetchPanToken">查看完整卡号</button>
+  </div>
+</template>
+
+<script setup>
+// 调用 GET /api/v1/cards/{id}/pan-token
+const { data } = await fetch('/api/v1/cards/' + cardId + '/pan-token', {
+  headers: { Authorization: 'Bearer ' + token }
+});
+iframeUrl.value = data.iframeUrl;
+expiresIn.value = data.expiresIn;
+</script>
+```
+
+#### 注意事项
+
+- **Token 仅一次**: 每次查看卡号必须重新调用 `/pan-token`
+- **有效期 60 秒**: 用户需在 60 秒内完成查看
+- **沙箱预览工具**: `https://embedded-sandbox.uqpaytech.com/iframe/preview/`
+
+---
+
+### 3.5 转账 (Transfer) — 钱包充值
+
+| 操作 | 端点 | 方法 |
+|------|------|------|
+| 创建转账 | `/api/v1/transfer` | POST |
+| 转账列表 | `/api/v1/transfer` | GET |
+
+**充值流程**：
+1. 用户向平台在 UQPay 的钱包地址转账 USDT
+2. 平台监听链上到账（通过 Webhook 或轮询）
+3. 确认后调用 Transfer API 将资金转入发卡账户
+
+**创建转账请求体**：
+```json
+{
+  "source_account_id": "<平台账户ID>",
+  "target_account_id": "<持卡人账户ID>",
   "currency": "USD",
   "amount": "100.00",
   "reason": "Card wallet top-up"
 }
 ```
 
-**SDK 鏂规硶**锛?
+**SDK 方法**：
 ```ts
 const transfer = await sdk.transferToCard(
   sourceAccountId,
@@ -199,103 +303,110 @@ const transfer = await sdk.transferToCard(
 
 ---
 
-## 4. 娓犻亾閰嶇疆 (card_channels 琛?
+## 4. 渠道配置 (card_channels 表)
 
-鍦?`card_channels` 琛ㄤ腑閰嶇疆 UQPay 娓犻亾锛?
+在 `card_channels` 表中配置 UQPay 渠道：
 
 ```sql
 INSERT INTO card_channels
   (channel_code, channel_name, api_base_url, api_key, api_secret, status, config_json)
 VALUES
-  ('UQPAY', 'UQPay 鍙戝崱', 'https://api-sandbox.uqpaytech.com', '<client_id>', '<api_key>', 1,
-   '{"clientId":"<client_id>","apiSecret":"<api_secret>","depositAddresses":{"trx":"TRC20鍦板潃","eth":"ERC20鍦板潃","bnb":"BEP20鍦板潃"}}');
+  ('UQPAY', 'UQPay 发卡', 'https://api-sandbox.uqpaytech.com', '<client_id>', '<api_key>', 1,
+   '{"clientId":"<client_id>","apiSecret":"<api_secret>","depositAddresses":{"trx":"TRC20地址","eth":"ERC20地址","bnb":"BEP20地址"}}');
 ```
 
-### config_json 瀛楁璇存槑
+### config_json 字段说明
 
-| 瀛楁 | 璇存槑 |
+| 字段 | 说明 |
 |------|------|
-| `clientId` | UQPay Client ID锛堝彲鏇夸唬 api_key锛?|
-| `apiSecret` | UQPay API Secret锛堝彲鏇夸唬 api_secret锛?|
-| `depositAddresses.trx` | 骞冲彴 TRC20 USDT 鍏呭€煎湴鍧€ |
-| `depositAddresses.eth` | 骞冲彴 ERC20 USDT 鍏呭€煎湴鍧€ |
-| `depositAddresses.bnb` | 骞冲彴 BEP20 USDT 鍏呭€煎湴鍧€ |
+| `clientId` | UQPay Client ID（可替代 api_key） |
+| `apiSecret` | UQPay API Secret（可替代 api_secret） |
+| `depositAddresses.trx` | 平台 TRC20 USDT 充值地址 |
+| `depositAddresses.eth` | 平台 ERC20 USDT 充值地址 |
+| `depositAddresses.bnb` | 平台 BEP20 USDT 充值地址 |
 
 ---
 
-## 5. 鏁版嵁搴撳瓧娈靛彉鏇?
+## 5. 数据库字段变更
 
 ```sql
--- cards 琛ㄦ柊澧?channel_code 瀛楁
+-- cards 表新增 channel_code 字段
 ALTER TABLE cards ADD COLUMN channel_code VARCHAR(20) DEFAULT 'MOCK';
 
--- usdt_orders 琛ㄦ柊澧?uqpay_order_id 瀛楁
+-- usdt_orders 表新增 uqpay_order_id 字段
 ALTER TABLE usdt_orders ADD COLUMN uqpay_order_id VARCHAR(100);
 ```
 
 ---
 
-## 6. 鎺ュ彛璺敱鏄犲皠
+## 6. 接口路由映射
 
-| 鍔熻兘 | 璺敱 | 鏂规硶 |
-|------|------|------|
-| 鑾峰彇鍏呭€煎湴鍧€ | `GET /api/v1/wallet/address` | UQPay 鈫?getDepositAddress |
-| 鍒涘缓鍏呭€艰鍗?| `POST /api/v1/wallet/deposit/c2c` | UQPay 鈫?createC2COrder |
-| 鍒涘缓鍗＄墖 | `POST /api/v1/cards` | UQPay 鈫?getOrCreateCardholder + createCard |
-| 鍐荤粨鍗＄墖 | `POST /api/v1/cards/:id/freeze` | UQPay 鈫?freezeCard |
-| 瑙ｅ喕鍗＄墖 | `POST /api/v1/cards/:id/unfreeze` | UQPay 鈫?unfreezeCard |
-| 娉ㄩ攢鍗＄墖 | `POST /api/v1/cards/:id/cancel` | UQPay 鈫?cancelCard |
-| 鏌ョ湅鍗￠潰 | `GET /api/v1/cards/:id/reveal` | 杩斿洖鎻愮ず锛堟槑鏂囦粠 Dashboard 鑾峰彇锛墊
-
----
-
-## 7. 娓犻亾浼樺厛绾?
-
-绯荤粺鏀寔澶氭笭閬撹嚜鍔ㄥ垏鎹紝浼樺厛绾э細
-
-1. **UQPAY** 鈥?鏈€楂樹紭鍏堢骇锛宍channel_code = 'UQPAY'` 涓?`status = 1`
-2. **DogPay** 鈥?澶囬€夋笭閬擄紝`channel_code = 'dogpay'` 涓?`status = 1`
-3. **Mock** 鈥?鏃犳笭閬撴椂闄嶇骇锛屾湰鍦扮敓鎴愬亣鍗℃暟鎹紙浠呮祴璇曠敤锛?
+| 功能 | 路由 | SDK 方法 |
+|------|------|---------|
+| 获取充值地址 | `GET /api/v1/wallet/address` | getDepositAddress |
+| 创建充值订单 | `POST /api/v1/wallet/deposit/c2c` | createC2COrder |
+| 创建卡片 | `POST /api/v1/cards` | getOrCreateCardholder + createCard |
+| 冻结卡片 | `POST /api/v1/cards/:id/freeze` | freezeCard |
+| 解冻卡片 | `POST /api/v1/cards/:id/unfreeze` | unfreezeCard |
+| 注销卡片 | `POST /api/v1/cards/:id/cancel` | cancelCard |
+| 查看卡面（Mock/DogPay） | `GET /api/v1/cards/:id/reveal` | 直接返回明文 |
+| 查看卡面（UQPay） | `GET /api/v1/cards/:id/pan-token` | getPanToken + buildSecureIframeUrl |
 
 ---
 
-## 8. Webhook 閰嶇疆锛堝缓璁級
+## 7. 渠道优先级
 
-寤鸿閰嶇疆 UQPay Webhook 鎺ユ敹浠ヤ笅浜嬩欢锛?
+系统支持多渠道自动切换，优先级：
 
-| 浜嬩欢 | 璇存槑 |
+1. **UQPAY** — 最高优先级，`channel_code = 'UQPAY'` 且 `status = 1`
+2. **DogPay** — 备选渠道，`channel_code = 'dogpay'` 且 `status = 1`
+3. **Mock** — 无渠道时降级，本地生成假卡数据（仅测试用）
+
+---
+
+## 8. Webhook 配置（建议）
+
+建议配置 UQPay Webhook 接收以下事件：
+
+| 事件 | 说明 |
 |------|------|
-| `card.created` | 鏂板崱鍒涘缓鎴愬姛 |
-| `card.status_changed` | 鍗＄墖鐘舵€佸彉鏇达紙鍐荤粨/瑙ｅ喕/鍙栨秷锛?|
-| `transfer.completed` | 杞处瀹屾垚锛堝厖鍊肩‘璁わ級 |
-| `card.transaction` | 鍗＄墖娑堣垂/閫€娆鹃€氱煡 |
+| `card.created` | 新卡创建成功 |
+| `card.status_changed` | 卡片状态变更（冻结/解冻/取消） |
+| `transfer.completed` | 转账完成（充值确认） |
+| `card.transaction` | 卡片消费/退款通知 |
 
-Webhook 鍦板潃锛歚POST /api/v1/webhooks/uqpay`
-
----
-
-## 9. 娌欑娴嬭瘯璐﹀彿鐢宠
-
-1. 鐧诲綍 UQPay 寮€鍙戣€呭钩鍙?
-2. 杩涘叆銆孉PI Keys銆嶉〉闈㈢敓鎴?`client_id` 鍜?`api_key`
-3. 鍦?Dashboard 鐢宠鍙戝崱璐︽埛鏉冮檺
-4. 閰嶇疆娴嬭瘯鍗′骇鍝侊紙Sandbox 鐜涓嬪崱浜у搧 ID 涓嶅悓锛?
+Webhook 地址：`POST /api/v1/webhooks/uqpay`
 
 ---
 
-## 10. 甯歌闂
+## 9. 沙箱测试账号申请
 
-**Q: 鍒涘缓鎸佸崱浜哄け璐ワ紙400/401锛夛紵**
-A: 妫€鏌?`x-client-id` 鍜?`x-api-key` 鏄惁姝ｇ‘锛岀‘璁よ处鎴峰凡寮€閫氬彂鍗℃潈闄愩€?
+1. 登录 UQPay 开发者平台
+2. 进入「API Keys」页面生成 `client_id` 和 `api_key`
+3. 在 Dashboard 申请发卡账户权限
+4. 配置测试卡产品（Sandbox 环境下卡产品 ID 不同）
 
-**Q: 鍗′骇鍝?ID 濡備綍鑾峰彇锛?*
-A: 璋冪敤 `GET /api/v1/issuing/products` 鍒楀嚭鍙敤浜у搧銆?
+---
 
-**Q: 鍏呭€煎湴鍧€涓嶈繑鍥烇紵**
-A: 纭 `card_channels.config_json` 涓凡閰嶇疆 `depositAddresses` 瀵硅薄銆?
+## 10. 常见问题
 
-**Q: 鏄庢枃鍗″彿/CVV 鏃犳硶鑾峰彇锛?*
-A: 杩欐槸 UQPay 鐨?PCI DSS 瀹夊叏璁捐銆傛槑鏂囦俊鎭彧鑳戒粠 UQPay Dashboard 鏌ョ湅锛屾垨閫氳繃 Webhook 鎺ユ敹銆?
+**Q: 创建持卡人失败（400/401）？**
+A: 检查 `x-client-id` 和 `x-api-key` 是否正确，确认账户已开通发卡权限。
 
-**Q: 濡備綍浠?DogPay 鍒囨崲鍒?UQPay锛?*
-A: 灏?`card_channels` 涓?DogPay 璁板綍 `status = 0`锛屾坊鍔?UQPay 璁板綍 `status = 1`锛岄噸鍚湇鍔″嵆鍙嚜鍔ㄥ垏鎹€?
+**Q: 卡产品 ID 如何获取？**
+A: 调用 `GET /api/v1/issuing/products` 列出可用产品。
+
+**Q: 充值地址不返回？**
+A: 确认 `card_channels.config_json` 中已配置 `depositAddresses` 对象。
+
+**Q: 明文卡号/CVV 如何获取？**
+A: UQPay 不在 API 响应中返回明文（PCI DSS 合规）。通过 Secure iFrame 安全展示：
+   1. 调用 `GET /api/v1/cards/{id}/pan-token` 获取 iframeUrl
+   2. 将 iframeUrl 嵌入 `<iframe>` 标签
+   3. 用户在 iFrame 内查看完整卡号/CVV/有效期（Token 有效期 60 秒）
+
+**Q: 为什么需要 /pan-token 端点，不能直接返回 iframeUrl？**
+A: PAN Token 有效期仅 60 秒且仅可使用一次。如果在开卡时返回，用户稍后打开页面时 Token 已过期。必须由用户在需要查看时实时请求。
+
+**Q: 如何从 DogPay 切换到 UQPay？**
+A: 将 `card_channels` 中 DogPay 记录 `status = 0`，添加 UQPay 记录 `status = 1`，重启服务即可自动切换。
