@@ -3,20 +3,77 @@ import db from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ApiResponse, Card } from '../types';
 import { sendEmail, cardOpenedTemplate, topupSuccessTemplate } from '../mail';
-import { DogPaySDK } from '../channels/dogpay';
+import { UqPaySDK } from '../channels/uqpay';
 import { getMerchantOpenableBins } from '../merchant-bin-access';
 
 const router = Router();
 
-async function getDogPaySDK() {
-  const channel = db.prepare("SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1").get() as any;
-  if (!channel) return null;
-  return new DogPaySDK({
-    appId: channel.api_key,
-    appSecret: channel.api_secret,
-    apiBaseUrl: channel.api_base_url
-  });
+// ── 渠道 SDK 工厂 ────────────────────────────────────────────────────────────
+
+interface ChannelSDK {
+  type: 'uqpay' | 'dogpay' | 'mock';
+  sdk?: UqPaySDK;
+  channel?: any;
 }
+
+/**
+ * 获取当前启用的发卡渠道 SDK
+ * 优先级: UQPay → DogPay → Mock
+ */
+async function getChannelSDK(): Promise<ChannelSDK> {
+  // 1. UQPay 渠道
+  const uqpayChannel = db.prepare(
+    "SELECT * FROM card_channels WHERE channel_code = 'UQPAY' AND status = 1"
+  ).get() as any;
+
+  if (uqpayChannel) {
+    // config_json 中可配置 clientId/apiKey，也可从 api_key/api_secret 字段读取
+    let config: Record<string, string> = {};
+    try {
+      config = JSON.parse(uqpayChannel.config_json || '{}');
+    } catch (_) {}
+
+    const sdk = new UqPaySDK({
+      clientId: config.clientId || uqpayChannel.api_key || '',
+      apiKey: config.apiSecret || uqpayChannel.api_secret || '',
+      baseUrl: uqpayChannel.api_base_url || undefined,
+    });
+
+    // 如果 config_json 中有充值地址配置，注入到 SDK
+    if (config.depositAddresses) {
+      (sdk as any)._platformDepositAddresses = config.depositAddresses;
+    }
+
+    console.log('[Channel] 使用 UQPay 渠道');
+    return { type: 'uqpay', sdk, channel: uqpayChannel };
+  }
+
+  // 2. DogPay 渠道（兼容旧接口）
+  const dogpayChannel = db.prepare(
+    "SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1"
+  ).get() as any;
+
+  if (dogpayChannel) {
+    try {
+      const { DogPaySDK } = await import('../channels/dogpay');
+      const sdk = new DogPaySDK({
+        appId: dogpayChannel.api_key,
+        appSecret: dogpayChannel.api_secret,
+        apiBaseUrl: dogpayChannel.api_base_url,
+      });
+      console.log('[Channel] 使用 DogPay 渠道');
+      return { type: 'dogpay', sdk, channel: dogpayChannel };
+    } catch (err: any) {
+      console.error('[Channel] DogPay SDK 加载失败:', err.message);
+    }
+  }
+
+  // 3. 无渠道，降级为 Mock
+  console.log('[Channel] 无可用渠道，降级为 Mock 模式');
+  return { type: 'mock' };
+}
+
+// ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 function generateCardNo(binCode?: string): { cardNo: string; masked: string } {
   const bin = String(binCode || '411111').slice(0, 6).padEnd(6, '1');
@@ -32,16 +89,19 @@ function generateCVV(): string {
 
 function generateExpireDate(): string {
   const date = new Date();
-  date.setFullYear(date.getFullYear() + 1);
-  return date.toISOString().split('T')[0];
+  date.setFullYear(date.getFullYear() + 3);
+  return `${String(date.getFullYear()).slice(-2)}/${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
+
+// ── 可用卡段 ────────────────────────────────────────────────────────────────
 
 router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   try {
-    const sdk = await getDogPaySDK();
+    const channel = await getChannelSDK();
     let bins = getMerchantOpenableBins(req.user!.userId);
 
-    if (sdk) {
+    if (channel.type !== 'mock') {
+      // 渠道模式: 只显示已分配 external_bin_id 的卡段
       bins = bins.filter((bin: any) => !!bin.external_bin_id);
     }
 
@@ -52,10 +112,15 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
   }
 });
 
+// ── 我的卡片列表 ────────────────────────────────────────────────────────────
+
 router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   const { status } = req.query;
 
-  let sql = 'SELECT id, card_no_masked, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, purpose, created_at, bin_id FROM cards WHERE user_id = ?';
+  let sql = `SELECT id, card_no_masked, card_name, card_type, currency, balance,
+    credit_limit, single_limit, daily_limit, status, expire_date, purpose,
+    created_at, bin_id, channel_code
+    FROM cards WHERE user_id = ?`;
   const params: any[] = [req.user!.userId];
 
   if (status) {
@@ -69,6 +134,8 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
 
   res.json({ code: 0, message: 'success', data: cards, timestamp: Date.now() });
 });
+
+// ── 创建卡片 ────────────────────────────────────────────────────────────────
 
 router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const { cardName, cardType, creditLimit, singleLimit, dailyLimit, purpose, binId } = req.body;
@@ -87,13 +154,15 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   let expireDate = '';
   let externalId = '';
   let selectedBinId: number | null = null;
-  let selectedBinCode: string | null = null;
+  let channelCode = 'MOCK';
+  let uqpayCardholderId: string | null = null;
 
-  const sdk = await getDogPaySDK();
-
+  const channel = await getChannelSDK();
   let allowedBins = getMerchantOpenableBins(req.user!.userId);
-  if (sdk) {
+
+  if (channel.type !== 'mock') {
     allowedBins = allowedBins.filter((bin: any) => !!bin.external_bin_id);
+    channelCode = channel.type === 'uqpay' ? 'UQPAY' : 'DOGPAY';
   }
 
   const selectedBin = binId
@@ -109,14 +178,78 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   }
 
   selectedBinId = Number(selectedBin.id);
-  selectedBinCode = String(selectedBin.bin_code || '');
 
-  if (sdk) {
+  // ── 渠道开卡 ──────────────────────────────────────────────────────────
+
+  if (channel.type === 'uqpay' && channel.sdk) {
+    const sdk = channel.sdk;
+
     try {
-      const dogpayRes = await sdk.createCard({
+      // 获取用户信息
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.userId) as any;
+      if (!user) {
+        return res.json({ code: 401, message: '用户不存在', timestamp: Date.now() });
+      }
+
+      // 1. 获取或创建持卡人
+      const firstName = (user.nickname || user.email || 'User').split(/[@.\s]/)[0] || 'User';
+      const lastName = (user.email || 'User').split(/[@]/)[0] || 'User';
+
+      const cardholder = await sdk.getOrCreateCardholder({
+        email: user.email,
+        firstName,
+        lastName,
+        countryCode: 'US',
+        phoneNumber: user.phone || '+10000000000',
+        nationality: user.country_code || 'US',
+      });
+
+      uqpayCardholderId = cardholder.id;
+
+      // 2. 获取卡产品 ID
+      const cardProductId = await sdk.getCardProductId('USD');
+
+      // 3. 创建卡片
+      const cardResult = await sdk.createCard({
+        cardholderId: cardholder.id,
+        cardProductId,
+        cardCurrency: 'USD',
+        cardLimit: Number(creditLimit),
+        cardType: cardType === 'physical' ? 'physical' : 'virtual',
+        metadata: {
+          userId: String(req.user!.userId),
+          cardName,
+        },
+      });
+
+      externalId = cardResult.id;
+      masked = `****${cardResult.last4}`;
+      // UQPay 明文卡号通常不在 API 响应中返回（PCI 合规），通过 webhook 或 Dashboard 获取
+      cardNo = '';
+      // CVV 同上
+      cvv = cardResult.cvv
+        ? cardResult.cvv
+        : '[请在 UQPay Dashboard 查看完整卡面信息]';
+      expireDate = `${cardResult.expiryYear}/${cardResult.expiryMonth}`;
+
+      console.log('[UQPay] 开卡成功:', externalId, masked);
+
+    } catch (err: any) {
+      console.error('[UQPay] 开卡失败:', err.message);
+      return res.json({
+        code: 500,
+        message: 'UQPay 开卡失败: ' + err.message,
+        timestamp: Date.now()
+      });
+    }
+
+  } else if (channel.type === 'dogpay' && (channel.sdk as any)?.createCard) {
+    // DogPay 兼容
+    try {
+      const dogpayRes = await (channel.sdk as any).createCard({
         cardType: cardType === 'physical' ? 'physical' : 'virtual',
         cardName,
-        channelId: selectedBin.external_bin_id
+        channelId: selectedBin.external_bin_id,
       });
 
       if (dogpayRes && dogpayRes.data) {
@@ -124,26 +257,41 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         externalId = cardData.id;
         cardNo = cardData.idNo || '';
         masked = cardData.last4 ? `****${cardData.last4}` : '****';
-        expireDate = cardData.createdAt ? new Date(cardData.createdAt).toISOString().split('T')[0] : generateExpireDate();
-        cvv = '***';
+        expireDate = cardData.createdAt
+          ? new Date(cardData.createdAt).toISOString().split('T')[0]
+          : generateExpireDate();
+
+        cvv = cardData.cvv && cardData.cvv !== '***'
+          ? cardData.cvv
+          : '[请在 DogPay 控制台查看完整卡面信息]';
       } else {
-        return res.json({ code: 500, message: '渠道开卡失败: ' + (dogpayRes?.message || '未知错误'), timestamp: Date.now() });
+        return res.json({
+          code: 500,
+          message: '渠道开卡失败: ' + (dogpayRes?.message || '未知错误'),
+          timestamp: Date.now()
+        });
       }
     } catch (err: any) {
       console.error('DogPay create card error:', err.message);
       return res.json({ code: 500, message: '渠道接口调用异常', timestamp: Date.now() });
     }
+
   } else {
-    const mock = generateCardNo(selectedBinCode || undefined);
+    // Mock 模式
+    const mock = generateCardNo(selectedBin.bin_code || undefined);
     cardNo = mock.cardNo;
     masked = mock.masked;
     cvv = generateCVV();
     expireDate = generateExpireDate();
   }
 
+  // ── 写入数据库 ─────────────────────────────────────────────────────────
+
   const result = db.prepare(`
-    INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, cvv, purpose, external_id)
-    VALUES (?, ?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?, ?)
+    INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type,
+      currency, balance, credit_limit, single_limit, daily_limit, status, expire_date,
+      cvv, purpose, external_id, channel_code, uqpay_cardholder_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
   `).run(
     cardNo,
     masked,
@@ -157,7 +305,9 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     expireDate,
     cvv,
     purpose || null,
-    externalId || null
+    externalId || null,
+    channelCode,
+    uqpayCardholderId
   );
 
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
@@ -176,20 +326,25 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     data: {
       id: result.lastInsertRowid,
       cardNoMasked: masked,
-      cvv: '***',
+      cvv,
       expireDate,
       cardName,
       cardType,
       creditLimit,
-      binId: selectedBinId
+      binId: selectedBinId,
+      channel: channelCode,
     },
     timestamp: Date.now()
   });
 });
 
+// ── 卡片详情 ────────────────────────────────────────────────────────────────
+
 router.get('/:id', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   const card = db.prepare(`
-    SELECT id, card_no_masked, card_name, card_type, currency, balance, credit_limit, single_limit, daily_limit, status, expire_date, purpose, created_at
+    SELECT id, card_no_masked, card_name, card_type, currency, balance,
+      credit_limit, single_limit, daily_limit, status, expire_date, purpose,
+      created_at, channel_code, external_id
     FROM cards WHERE id = ? AND user_id = ?
   `).get(req.params.id, req.user!.userId);
 
@@ -200,24 +355,38 @@ router.get('/:id', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>
   res.json({ code: 0, message: 'success', data: card, timestamp: Date.now() });
 });
 
+// ── 查看完整卡面信息 ────────────────────────────────────────────────────────
+
 router.get('/:id/reveal', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
-  const card = db.prepare('SELECT card_no, cvv, expire_date FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as Card | undefined;
+  const card = db.prepare(
+    'SELECT card_no, cvv, expire_date, external_id, channel_code FROM cards WHERE id = ? AND user_id = ?'
+  ).get(req.params.id, req.user!.userId) as (Card & { external_id?: string; channel_code?: string }) | undefined;
 
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
   }
+
+  const isRealCard = !!card.external_id;
+  const channelLabel = card.channel_code === 'UQPAY' ? 'UQPay' : 'DogPay';
+  const cvvDisplay = isRealCard
+    ? (card.cvv?.startsWith('[') ? card.cvv : `请在 ${channelLabel} 控制台查看完整卡面信息`)
+    : card.cvv;
 
   res.json({
     code: 0,
     message: 'success',
     data: {
       cardNo: card.card_no,
-      cvv: card.cvv,
-      expireDate: card.expire_date
+      cvv: cvvDisplay,
+      expireDate: card.expire_date,
+      isRealCard,
+      channel: card.channel_code,
     },
     timestamp: Date.now()
   });
 });
+
+// ── 卡片充值 ────────────────────────────────────────────────────────────────
 
 router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const { amount } = req.body;
@@ -226,7 +395,9 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
     return res.json({ code: 400, message: '请输入有效金额', timestamp: Date.now() });
   }
 
-  const card = db.prepare('SELECT c.*, u.email FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?').get(req.params.id, req.user!.userId) as (Card & { email?: string }) | undefined;
+  const card = db.prepare(
+    'SELECT c.*, u.email FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?'
+  ).get(req.params.id, req.user!.userId) as (Card & { email?: string }) | undefined;
 
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
@@ -256,6 +427,8 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
   res.json({ code: 0, message: '充值成功', data: { newBalance }, timestamp: Date.now() });
 });
 
+// ── 冻结卡片 ────────────────────────────────────────────────────────────────
+
 router.post('/:id/freeze', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
 
@@ -264,10 +437,17 @@ router.post('/:id/freeze', authMiddleware, async (req: AuthRequest, res: Respons
   }
 
   if (card.external_id) {
-    const sdk = await getDogPaySDK();
-    if (sdk) {
+    const channel = await getChannelSDK();
+
+    if (channel.type === 'uqpay' && channel.sdk) {
       try {
-        await sdk.freezeCard(card.external_id);
+        await channel.sdk.freezeCard(card.external_id);
+      } catch (err: any) {
+        return res.json({ code: 500, message: 'UQPay 冻结失败: ' + err.message, timestamp: Date.now() });
+      }
+    } else if (channel.type === 'dogpay' && (channel.sdk as any)?.freezeCard) {
+      try {
+        await (channel.sdk as any).freezeCard(card.external_id);
       } catch (err: any) {
         return res.json({ code: 500, message: '渠道冻结失败: ' + err.message, timestamp: Date.now() });
       }
@@ -275,9 +455,10 @@ router.post('/:id/freeze', authMiddleware, async (req: AuthRequest, res: Respons
   }
 
   db.prepare('UPDATE cards SET status = 2, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-
   res.json({ code: 0, message: '卡片已冻结', timestamp: Date.now() });
 });
+
+// ── 解冻卡片 ────────────────────────────────────────────────────────────────
 
 router.post('/:id/unfreeze', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
@@ -287,10 +468,17 @@ router.post('/:id/unfreeze', authMiddleware, async (req: AuthRequest, res: Respo
   }
 
   if (card.external_id) {
-    const sdk = await getDogPaySDK();
-    if (sdk) {
+    const channel = await getChannelSDK();
+
+    if (channel.type === 'uqpay' && channel.sdk) {
       try {
-        await sdk.unfreezeCard(card.external_id);
+        await channel.sdk.unfreezeCard(card.external_id);
+      } catch (err: any) {
+        return res.json({ code: 500, message: 'UQPay 解冻失败: ' + err.message, timestamp: Date.now() });
+      }
+    } else if (channel.type === 'dogpay' && (channel.sdk as any)?.unfreezeCard) {
+      try {
+        await (channel.sdk as any).unfreezeCard(card.external_id);
       } catch (err: any) {
         return res.json({ code: 500, message: '渠道解冻失败: ' + err.message, timestamp: Date.now() });
       }
@@ -298,9 +486,10 @@ router.post('/:id/unfreeze', authMiddleware, async (req: AuthRequest, res: Respo
   }
 
   db.prepare('UPDATE cards SET status = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-
   res.json({ code: 0, message: '卡片已解冻', timestamp: Date.now() });
 });
+
+// ── 注销卡片 ────────────────────────────────────────────────────────────────
 
 router.post('/:id/cancel', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
@@ -310,10 +499,17 @@ router.post('/:id/cancel', authMiddleware, async (req: AuthRequest, res: Respons
   }
 
   if (card.external_id) {
-    const sdk = await getDogPaySDK();
-    if (sdk) {
+    const channel = await getChannelSDK();
+
+    if (channel.type === 'uqpay' && channel.sdk) {
       try {
-        await sdk.deleteCard(card.external_id);
+        await channel.sdk.cancelCard(card.external_id);
+      } catch (err: any) {
+        return res.json({ code: 500, message: 'UQPay 销卡失败: ' + err.message, timestamp: Date.now() });
+      }
+    } else if (channel.type === 'dogpay' && (channel.sdk as any)?.deleteCard) {
+      try {
+        await (channel.sdk as any).deleteCard(card.external_id);
       } catch (err: any) {
         return res.json({ code: 500, message: '渠道销卡失败: ' + err.message, timestamp: Date.now() });
       }
@@ -329,7 +525,6 @@ router.post('/:id/cancel', authMiddleware, async (req: AuthRequest, res: Respons
   }
 
   db.prepare('UPDATE cards SET status = 4, balance = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-
   res.json({ code: 0, message: '卡片已注销', timestamp: Date.now() });
 });
 
