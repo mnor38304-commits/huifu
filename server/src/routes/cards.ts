@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+﻿import { Router, Response } from 'express';
 import db from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ApiResponse, Card } from '../types';
@@ -224,12 +224,10 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
       externalId = cardResult.id;
       masked = `****${cardResult.last4}`;
-      // UQPay 明文卡号通常不在 API 响应中返回（PCI 合规），通过 webhook 或 Dashboard 获取
+          // UQPay 真实卡号通过 Secure iFrame 展示（PCI DSS 合规），不在 API 直接返回
+      // 前端通过 POST /api/v1/cards/{id}/pan-token 获取 iframeUrl
       cardNo = '';
-      // CVV 同上
-      cvv = cardResult.cvv
-        ? cardResult.cvv
-        : '[请在 UQPay Dashboard 查看完整卡面信息]';
+      cvv = '[查看卡号 → Secure iFrame]';
       expireDate = `${cardResult.expiryYear}/${cardResult.expiryMonth}`;
 
       console.log('[UQPay] 开卡成功:', externalId, masked);
@@ -263,7 +261,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
         cvv = cardData.cvv && cardData.cvv !== '***'
           ? cardData.cvv
-          : '[请在 DogPay 控制台查看完整卡面信息]';
+          : '[查看卡号 → Secure iFrame]';
       } else {
         return res.json({
           code: 500,
@@ -333,6 +331,12 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       creditLimit,
       binId: selectedBinId,
       channel: channelCode,
+      // UQPay 真实卡号/CVV 需通过 Secure iFrame 查看
+      requiresSecureIframe: channelCode === 'UQPAY',
+      // 前端调用 GET /pan-token 获取 iframe URL
+      secureIframeHint: channelCode === 'UQPAY'
+        ? '卡片已创建。请调用 GET /pan-token 获取 Secure iFrame URL 查看完整卡号'
+        : undefined,
     },
     timestamp: Date.now()
   });
@@ -356,8 +360,62 @@ router.get('/:id', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>
 });
 
 // ── 查看完整卡面信息 ────────────────────────────────────────────────────────
+// Secure iFrame 模式: https://docs.uqpay.com/docs/secure-iframe-guide
+//
+// 流程: POST /pan-token → 获得 iframeUrl → 前端嵌入 iFrame → 用户在 iFrame 内查看卡号/CVV/有效期
+// Token 有效期 60 秒，仅可使用一次
 
-router.get('/:id/reveal', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+/**
+ * GET /:id/pan-token
+ * 为 UQPay 卡片生成 Secure iFrame PAN Token，返回可直接使用的 iFrame URL
+ * 返回: { iframeUrl, cardId, expiresIn, expiresAt }
+ */
+router.get('/:id/pan-token', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const card = db.prepare(
+    'SELECT id, external_id, channel_code FROM cards WHERE id = ? AND user_id = ?'
+  ).get(req.params.id, req.user!.userId) as any;
+
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  if (card.channel_code !== 'UQPAY' || !card.external_id) {
+    return res.json({ code: 400, message: '该渠道不支持 Secure iFrame', timestamp: Date.now() });
+  }
+
+  try {
+    const channel = await getChannelSDK();
+    if (channel.type !== 'uqpay' || !channel.sdk) {
+      return res.json({ code: 500, message: 'UQPay 渠道未配置', timestamp: Date.now() });
+    }
+
+    const { token, expiresIn, expiresAt } = await channel.sdk.getPanToken(card.external_id);
+    const iframeUrl = channel.sdk.buildSecureIframeUrl(token, card.external_id, 'zh');
+
+    res.json({
+      code: 0,
+      message: 'success',
+      data: {
+        iframeUrl,
+        cardId: card.external_id,
+        expiresIn,    // 秒，60
+        expiresAt,    // ISO 8601，过期时间
+      },
+      timestamp: Date.now(),
+    });
+  } catch (err: any) {
+    console.error('[UQPay] PAN Token 生成失败:', err.message);
+    return res.json({ code: 500, message: 'PAN Token 生成失败: ' + err.message, timestamp: Date.now() });
+  }
+});
+
+/**
+ * GET /:id/reveal
+ * 查看完整卡面信息
+ * - Mock/DogPay: 返回数据库中的明文数据
+ * - UQPay: 返回 Secure iFrame 模式，告知前端需通过 /pan-token 获取 iFrame URL
+ */
+router.get('/:id/reveal', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const card = db.prepare(
     'SELECT card_no, cvv, expire_date, external_id, channel_code FROM cards WHERE id = ? AND user_id = ?'
   ).get(req.params.id, req.user!.userId) as (Card & { external_id?: string; channel_code?: string }) | undefined;
@@ -366,23 +424,39 @@ router.get('/:id/reveal', authMiddleware, (req: AuthRequest, res: Response<ApiRe
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
   }
 
-  const isRealCard = !!card.external_id;
-  const channelLabel = card.channel_code === 'UQPAY' ? 'UQPay' : 'DogPay';
-  const cvvDisplay = isRealCard
-    ? (card.cvv?.startsWith('[') ? card.cvv : `请在 ${channelLabel} 控制台查看完整卡面信息`)
+  // UQPay 渠道 → Secure iFrame 模式，不返回明文卡号
+  if (card.channel_code === 'UQPAY' && card.external_id) {
+    return res.json({
+      code: 0,
+      message: 'success',
+      data: {
+        // 明文卡号/CVV 需通过 Secure iFrame 获取，不在 API 直接返回
+        cardNo: null,
+        cvv: null,
+        expireDate: card.expire_date,
+        mode: 'secure_iframe',   // 告诉前端使用 Secure iFrame
+        hint: '请调用 /pan-token 接口获取 Secure iFrame URL，在嵌入页面中查看完整卡号',
+      },
+      timestamp: Date.now(),
+    });
+  }
+
+  // Mock / DogPay → 直接返回数据库中的数据
+  const isDogPay = card.channel_code === 'DOGPAY';
+  const cvvDisplay = isDogPay
+    ? (card.cvv?.startsWith('[') ? card.cvv : `请在 DogPay 控制台查看完整卡面信息`)
     : card.cvv;
 
   res.json({
     code: 0,
     message: 'success',
     data: {
-      cardNo: card.card_no,
+      cardNo: card.card_no || null,
       cvv: cvvDisplay,
       expireDate: card.expire_date,
-      isRealCard,
-      channel: card.channel_code,
+      mode: 'direct',   // 直接展示模式
     },
-    timestamp: Date.now()
+    timestamp: Date.now(),
   });
 });
 
