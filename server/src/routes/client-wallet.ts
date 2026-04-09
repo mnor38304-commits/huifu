@@ -4,70 +4,106 @@ import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
-// 导出初始化函数，由 index.ts 在数据库初始化后调用
+// ── 迁移函数 ────────────────────────────────────────────────────────────────
+
 export const initWalletTables = () => {
   try {
     const database = getDb();
-    
-    // 创建钱包表
-    database.run(`CREATE TABLE IF NOT EXISTS wallets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER UNIQUE NOT NULL,
-      balance_usd REAL DEFAULT 0,
-      balance_usdt REAL DEFAULT 0,
-      locked_usd REAL DEFAULT 0,
-      currency VARCHAR(10) DEFAULT 'USD',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    
-    // 创建USDT订单表
-    database.run(`CREATE TABLE IF NOT EXISTS usdt_orders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_no VARCHAR(32) UNIQUE NOT NULL,
-      user_id INTEGER NOT NULL,
-      amount_usdt REAL NOT NULL,
-      amount_usd REAL NOT NULL,
-      exchange_rate REAL NOT NULL,
-      network VARCHAR(20) DEFAULT 'TRC20',
-      pay_address VARCHAR(100) NOT NULL,
-      tx_hash VARCHAR(100),
-      status INTEGER DEFAULT 0,
-      dogpay_order_id VARCHAR(100),
-      expire_at DATETIME,
-      confirmed_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    
-    // 迁移：为已存在的表添加缺失的列
+
+    // 迁移：为 usdt_orders 表添加 dogpay_order_id 列
     try {
       database.run(`ALTER TABLE usdt_orders ADD COLUMN dogpay_order_id VARCHAR(100)`);
     } catch (e: any) {
-      // 列可能已存在，忽略错误
+      // 列可能已存在，忽略
     }
-    
-    console.log('[Wallet] Tables initialized');
+
+    // 迁移：为 usdt_orders 表添加 uqpay_order_id 列
+    try {
+      database.run(`ALTER TABLE usdt_orders ADD COLUMN uqpay_order_id VARCHAR(100)`);
+    } catch (e: any) {
+      // 列可能已存在，忽略
+    }
+
+    console.log('[Wallet] Migrations applied');
   } catch (e) {
     console.error('[Wallet] initWalletTables error:', e);
   }
 };
 
-// 所有路由需要登录
-router.use(authMiddleware);
+// ── 渠道 SDK 工厂 ──────────────────────────────────────────────────────────
 
-// 获取当前用户ID的辅助函数
+async function getWalletChannelSDK() {
+  // UQPay 渠道
+  const uqpayChannel = db.prepare(
+    "SELECT * FROM card_channels WHERE channel_code = 'UQPAY' AND status = 1"
+  ).get() as any;
+
+  if (uqpayChannel) {
+    let config: Record<string, any> = {};
+    try {
+      config = JSON.parse(uqpayChannel.config_json || '{}');
+    } catch (_) {}
+
+    const { UqPaySDK } = await import('../channels/uqpay');
+    const sdk = new UqPaySDK({
+      clientId: config.clientId || uqpayChannel.api_key || '',
+      apiKey: config.apiSecret || uqpayChannel.api_secret || '',
+      baseUrl: uqpayChannel.api_base_url || undefined,
+    });
+
+    if (config.depositAddresses) {
+      (sdk as any)._platformDepositAddresses = config.depositAddresses;
+    }
+
+    return { type: 'uqpay' as const, sdk, channel: uqpayChannel };
+  }
+
+  // DogPay 渠道
+  const dogpayChannel = db.prepare(
+    "SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1"
+  ).get() as any;
+
+  if (dogpayChannel) {
+    try {
+      const { DogPaySDK } = await import('../channels/dogpay');
+      const sdk = new DogPaySDK({
+        appId: dogpayChannel.api_key,
+        appSecret: dogpayChannel.api_secret,
+        apiBaseUrl: dogpayChannel.api_base_url,
+      });
+      return { type: 'dogpay' as const, sdk, channel: dogpayChannel };
+    } catch (err: any) {
+      console.error('[Wallet] DogPay SDK 加载失败:', err.message);
+    }
+  }
+
+  return { type: 'none' as const };
+}
+
+// ── 辅助函数 ────────────────────────────────────────────────────────────────
+
 const getUserId = (req: any) => req.user?.userId;
 
-// ── 获取用户钱包信息 ─────────────────────────────────────────
+const chainMap: Record<string, string> = {
+  TRC20: 'trx',
+  ERC20: 'eth',
+  BEP20: 'bnb',
+};
+
+const chainNameMap: Record<string, string> = {
+  trx: 'TRC20',
+  eth: 'ERC20',
+  bnb: 'BEP20',
+};
+
+// ── 钱包信息 ────────────────────────────────────────────────────────────────
+
 router.get('/info', (req, res) => {
   const userId = getUserId(req);
 
-  // 获取或创建钱包
   let wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
 
   if (!wallet) {
-    // 创建钱包
     const result = db.prepare(`
       INSERT INTO wallets (user_id, balance_usd, balance_usdt, locked_usd, currency)
       VALUES (?, 0, 0, 0, 'USD')
@@ -78,87 +114,87 @@ router.get('/info', (req, res) => {
       balance_usd: 0,
       balance_usdt: 0,
       locked_usd: 0,
-      currency: 'USD'
+      currency: 'USD',
     };
   }
-
-  // 获取USD充值地址（通过DogPay）
-  let usdtAddress = '';
-  const addresses: Record<string, string> = {
-    TRC20: 'TRx7NqmJHkFxyz1234567890abcdefghij',
-    ERC20: '0xAbCdEf1234567890abcdef1234567890AbCdEf12',
-    BEP20: '0xBnBAddr1234567890abcdef1234567890BnBAddr'
-  };
 
   res.json({
     code: 0,
     data: {
       ...wallet,
-      defaultAddress: addresses['TRC20']
+      defaultAddress: null,
+      warning: '请通过「充值地址」接口获取真实充值地址'
     },
     timestamp: Date.now()
   });
 });
 
-// ── 获取充值地址 ─────────────────────────────────────────────
+// ── 获取充值地址 ────────────────────────────────────────────────────────────
+
 router.get('/address', async (req, res) => {
   const userId = getUserId(req);
   const { network = 'TRC20' } = req.query;
 
-  const addresses: Record<string, string> = {
-    TRC20: 'TRx7NqmJHkFxyz1234567890abcdefghij',
-    ERC20: '0xAbCdEf1234567890abcdef1234567890AbCdEf12',
-    BEP20: '0xBnBAddr1234567890abcdef1234567890BnBAddr'
-  };
-
-  const address = addresses[network as string] || addresses['TRC20'];
-
-  // 尝试从DogPay获取真实地址
   try {
-    const { DogPaySDK } = await import('../channels/dogpay');
-    const channel = db.prepare("SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1").get() as any;
-    if (channel) {
-      const sdk = new DogPaySDK({
-        appId: channel.api_key,
-        appSecret: channel.api_secret,
-        apiBaseUrl: channel.api_base_url
-      });
+    const channel = await getWalletChannelSDK();
 
-      const chainMap: Record<string, string> = {
-        TRC20: 'trx',
-        ERC20: 'eth',
-        BEP20: 'bnb'
-      };
+    if (channel.type === 'uqpay' && channel.sdk) {
+      const sdk = channel.sdk;
+      const chain = chainMap[network as string] || 'trx';
 
-      const result = await sdk.getDepositAddress({ chain: chainMap[network as string] || 'trx' });
+      try {
+        const addr = await sdk.getDepositAddress(chain);
+        return res.json({
+          code: 0,
+          data: {
+            address: addr.address,
+            network: chainNameMap[chain] || network,
+            qrCode: addr.qrCode || '',
+            channel: 'UQPAY',
+          },
+          timestamp: Date.now(),
+        });
+      } catch (err: any) {
+        console.error('[Wallet/UQPay] getDepositAddress error:', err.message);
+        return res.json({
+          code: 503,
+          message: err.message.includes('config_json')
+            ? '管理员尚未配置充值地址，请联系平台'
+            : '充值服务暂不可用，请稍后重试',
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    if (channel.type === 'dogpay' && channel.sdk) {
+      const result = await channel.sdk.getDepositAddress({ chain: chainMap[network as string] || 'trx' });
       if (result?.data?.address) {
         return res.json({
           code: 0,
           data: {
             address: result.data.address,
             network: network,
-            qrCode: result.data.qrCode || ''
+            qrCode: result.data.qrCode || '',
+            channel: 'DOGPAY',
           },
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
       }
     }
+
   } catch (err: any) {
     console.error('[Wallet] getDepositAddress error:', err.message);
   }
 
-  res.json({
-    code: 0,
-    data: {
-      address,
-      network: network,
-      qrCode: ''
-    },
-    timestamp: Date.now()
+  return res.json({
+    code: 503,
+    message: '充值服务暂不可用，请稍后重试或联系客服',
+    timestamp: Date.now(),
   });
 });
 
-// ── 获取充值订单列表 ─────────────────────────────────────────
+// ── 充值订单列表 ────────────────────────────────────────────────────────────
+
 router.get('/deposits', (req, res) => {
   const userId = getUserId(req);
   const { page = 1, pageSize = 20 } = req.query;
@@ -171,21 +207,22 @@ router.get('/deposits', (req, res) => {
     LIMIT ? OFFSET ?
   `).all(userId, Number(pageSize), offset);
 
-  const total = (db.prepare('SELECT COUNT(*) as c FROM usdt_orders WHERE user_id = ?').get(userId) as any).c;
+  const total = (db.prepare(
+    'SELECT COUNT(*) as c FROM usdt_orders WHERE user_id = ?'
+  ).get(userId) as any).c;
 
   res.json({
     code: 0,
     data: { list, total, page: Number(page), pageSize: Number(pageSize) },
-    timestamp: Date.now()
+    timestamp: Date.now(),
   });
 });
 
-// ── 创建充值订单（C2C买币）───────────────────────────────────
+// ── 创建充值订单（C2C买币）───────────────────────────────────────────────────
+
 router.post('/deposit/c2c', async (req, res) => {
   const userId = getUserId(req);
-  
-  console.log('[Wallet] createC2COrder - userId:', userId, 'body:', req.body);
-  
+
   if (!userId) {
     return res.json({ code: 401, message: '用户未登录' });
   }
@@ -196,61 +233,101 @@ router.post('/deposit/c2c', async (req, res) => {
     return res.json({ code: 400, message: '请输入有效的充值金额' });
   }
 
-  const exchangeRate = 1.0;
-  const amountUsd = amountUsdt * exchangeRate;
   const orderNo = `DP${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  const chain = chainMap[network as string] || 'trx';
 
-  // 尝试通过DogPay创建C2C订单
   let payAddress = '';
   let dogpayOrderId = '';
+  let uqpayOrderId = '';
+  let channelCode = 'NONE';
 
   try {
-    const { DogPaySDK } = await import('../channels/dogpay');
-    const channel = db.prepare("SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1").get() as any;
-    if (channel) {
-      const sdk = new DogPaySDK({
-        appId: channel.api_key,
-        appSecret: channel.api_secret,
-        apiBaseUrl: channel.api_base_url
-      });
+    const channel = await getWalletChannelSDK();
 
-      const chainMap: Record<string, string> = {
-        TRC20: 'trx',
-        ERC20: 'eth',
-        BEP20: 'bnb'
-      };
+    if (channel.type === 'uqpay' && channel.sdk) {
+      const sdk = channel.sdk;
+      channelCode = 'UQPAY';
 
-      const result = await sdk.createC2COrder({
-        amount: amountUsdt,
+      try {
+        const orderResult = await sdk.createC2COrder({
+          amount: Number(amountUsdt),
+          token: 'USDT',
+          network: chain,
+          userId: String(userId),
+        });
+
+        payAddress = orderResult.payAddress;
+        uqpayOrderId = orderResult.orderId;
+        const expireAt = orderResult.expireAt;
+
+        const result = db.prepare(`
+          INSERT INTO usdt_orders (order_no, user_id, amount_usdt, amount_usd, exchange_rate,
+            network, pay_address, status, uqpay_order_id, expire_at)
+          VALUES (?, ?, ?, ?, 1.0, ?, ?, 0, ?, ?)
+        `).run(orderNo, userId, amountUsdt, amountUsdt, network, payAddress, uqpayOrderId, expireAt);
+
+        return res.json({
+          code: 0,
+          data: {
+            orderId: result.lastInsertRowid,
+            orderNo,
+            amountUsdt,
+            amountUsd: amountUsdt,
+            exchangeRate: 1.0,
+            network,
+            payAddress,
+            expireAt,
+            channel: 'UQPAY',
+          },
+          timestamp: Date.now(),
+        });
+
+      } catch (err: any) {
+        console.error('[Wallet/UQPay] createC2COrder error:', err.message);
+        return res.json({
+          code: 503,
+          message: err.message.includes('config_json') || err.message.includes('配置')
+            ? '平台充值地址未配置，请联系管理员'
+            : '充值通道暂不可用，请稍后重试',
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    if (channel.type === 'dogpay' && channel.sdk) {
+      const result = await channel.sdk.createC2COrder({
+        amount: Number(amountUsdt),
         token: 'USDT',
-        network: chainMap[network as string] || 'trx'
+        network: chain,
       });
 
       if (result?.data) {
         payAddress = result.data.payAddress || '';
         dogpayOrderId = result.data.orderId || '';
+        channelCode = 'DOGPAY';
       }
     }
+
   } catch (err: any) {
     console.error('[Wallet] createC2COrder error:', err.message);
   }
 
-  // 如果没有获取到地址，使用备用地址
+  // 无可用渠道时拒绝创建
   if (!payAddress) {
-    const addresses: Record<string, string> = {
-      TRC20: 'TRx7NqmJHkFxyz1234567890abcdefghij',
-      ERC20: '0xAbCdEf1234567890abcdef1234567890AbCdEf12',
-      BEP20: '0xBnBAddr1234567890abcdef1234567890BnBAddr'
-    };
-    payAddress = addresses[network as string] || addresses['TRC20'];
+    return res.json({
+      code: 503,
+      message: '充值通道暂不可用，请稍后重试',
+      timestamp: Date.now(),
+    });
   }
 
   const expireAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
   const result = db.prepare(`
-    INSERT INTO usdt_orders (order_no, user_id, amount_usdt, amount_usd, exchange_rate, network, pay_address, status, dogpay_order_id, expire_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-  `).run(orderNo, userId, amountUsdt, amountUsd, exchangeRate, network, payAddress, dogpayOrderId || null, expireAt);
+    INSERT INTO usdt_orders (order_no, user_id, amount_usdt, amount_usd, exchange_rate,
+      network, pay_address, status, dogpay_order_id, expire_at)
+    VALUES (?, ?, ?, ?, 1.0, ?, ?, 0, ?, ?)
+  `).run(orderNo, userId, amountUsdt, amountUsdt, network, payAddress, dogpayOrderId || null, expireAt);
 
   res.json({
     code: 0,
@@ -258,20 +335,24 @@ router.post('/deposit/c2c', async (req, res) => {
       orderId: result.lastInsertRowid,
       orderNo,
       amountUsdt,
-      amountUsd,
-      exchangeRate,
+      amountUsd: amountUsdt,
+      exchangeRate: 1.0,
       network,
       payAddress,
-      expireAt
+      expireAt,
+      channel: channelCode,
     },
-    timestamp: Date.now()
+    timestamp: Date.now(),
   });
 });
 
-// ── 获取充值订单详情 ─────────────────────────────────────────
+// ── 充值订单详情 ────────────────────────────────────────────────────────────
+
 router.get('/deposits/:id', (req, res) => {
   const userId = getUserId(req);
-  const order = db.prepare('SELECT * FROM usdt_orders WHERE id = ? AND user_id = ?').get(req.params.id, userId);
+  const order = db.prepare(
+    'SELECT * FROM usdt_orders WHERE id = ? AND user_id = ?'
+  ).get(req.params.id, userId);
 
   if (!order) {
     return res.json({ code: 404, message: '订单不存在' });
@@ -280,7 +361,8 @@ router.get('/deposits/:id', (req, res) => {
   res.json({ code: 0, data: order, timestamp: Date.now() });
 });
 
-// ── 获取钱包流水记录 ─────────────────────────────────────────
+// ── 钱包流水记录 ────────────────────────────────────────────────────────────
+
 router.get('/records', (req, res) => {
   const userId = getUserId(req);
   const { page = 1, pageSize = 20, type } = req.query;
@@ -301,27 +383,30 @@ router.get('/records', (req, res) => {
     LIMIT ? OFFSET ?
   `).all(...params, Number(pageSize), offset);
 
-  const total = (db.prepare(`SELECT COUNT(*) as c FROM wallet_records ${whereClause}`).get(...params) as any).c;
+  const total = (db.prepare(
+    `SELECT COUNT(*) as c FROM wallet_records ${whereClause}`
+  ).get(...params) as any).c;
 
   res.json({
     code: 0,
     data: { list, total, page: Number(page), pageSize: Number(pageSize) },
-    timestamp: Date.now()
+    timestamp: Date.now(),
   });
 });
 
-// ── 获取钱包统计 ─────────────────────────────────────────────
+// ── 钱包统计 ────────────────────────────────────────────────────────────────
+
 router.get('/stats', (req, res) => {
   const userId = getUserId(req);
 
-  // 获取钱包余额
   let wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
   if (!wallet) {
-    db.prepare('INSERT INTO wallets (user_id, balance_usd, balance_usdt, locked_usd, currency) VALUES (?, 0, 0, 0, ?)').run(userId, 'USD');
+    db.prepare(
+      'INSERT INTO wallets (user_id, balance_usd, balance_usdt, locked_usd, currency) VALUES (?, 0, 0, 0, ?)'
+    ).run(userId, 'USD');
     wallet = { balance_usd: 0, balance_usdt: 0, locked_usd: 0 };
   }
 
-  // 获取今日充值
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
@@ -331,7 +416,6 @@ router.get('/stats', (req, res) => {
     WHERE user_id = ? AND status >= 1 AND created_at >= ?
   `).get(userId, todayStart.toISOString()) as any;
 
-  // 获取本月充值
   const monthStart = new Date();
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
@@ -349,9 +433,9 @@ router.get('/stats', (req, res) => {
       balanceUsdt: wallet.balance_usdt,
       lockedUsd: wallet.locked_usd,
       todayDeposit: todayDeposit?.total || 0,
-      monthDeposit: monthDeposit?.total || 0
+      monthDeposit: monthDeposit?.total || 0,
     },
-    timestamp: Date.now()
+    timestamp: Date.now(),
   });
 });
 
