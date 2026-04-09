@@ -1,4 +1,4 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 
 // ✅ FIX: Token 升级为 httpOnly Cookie（后端 auth.ts / admin-auth.ts 写入）
 // 优势：
@@ -47,6 +47,13 @@ export const getCards = (status?: number) => api.get('/cards', { params: { statu
 export const getAvailableCardBins = () => api.get('/cards/bins/available')
 export const createCard = (data: any) => api.post('/cards', data)
 export const getCardDetail = (id: number) => api.get(`/cards/${id}`)
+// Secure iFrame 模式: UQPay 渠道通过 /pan-token 获取 iframeUrl，嵌入页面安全展示卡号
+export const getPanToken = (id: number) => api.get<{
+  iframeUrl: string;
+  cardId: string;
+  expiresIn: number;   // 秒，60
+  expiresAt: string;  // ISO 8601
+}>(`/cards/${id}/pan-token`)
 export const revealCard = (id: number) => api.get(`/cards/${id}/reveal`)
 export const topupCard = (id: number, amount: number) => api.post(`/cards/${id}/topup`, { amount })
 export const freezeCard = (id: number) => api.post(`/cards/${id}/freeze`)
