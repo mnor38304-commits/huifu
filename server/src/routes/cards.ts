@@ -12,7 +12,7 @@ const router = Router();
 
 interface ChannelSDK {
   type: 'uqpay' | 'dogpay' | 'mock';
-  sdk?: UqPaySDK;
+  sdk?: UqPaySDK | any; // UqPaySDK 用于类型安全的 UQPay 渠道；DogPaySDK 为动态 import，用 any 松散关联
   channel?: any;
 }
 
