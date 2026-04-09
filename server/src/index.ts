@@ -106,6 +106,24 @@ async function start() {
     console.log('✅ Default channels created');
   }
 
+  // 从环境变量初始化/更新 DogPay 渠道配置
+  const dogpayApiUrl = process.env.DOGPAY_API_URL || 'https://api.dogpay.com';
+  const dogpayApiKey = process.env.DOGPAY_API_KEY;
+  const dogpayApiSecret = process.env.DOGPAY_API_SECRET;
+  if (dogpayApiKey && dogpayApiSecret) {
+    const existing = db.prepare("SELECT id FROM card_channels WHERE channel_code = 'dogpay'").get();
+    if (existing) {
+      db.prepare(`UPDATE card_channels SET api_key=?, api_secret=?, api_base_url=?, status=1 WHERE channel_code='dogpay'`)
+        .run(dogpayApiKey, dogpayApiSecret, dogpayApiUrl);
+    } else {
+      db.prepare(`INSERT INTO card_channels (channel_code,channel_name,api_key,api_secret,api_base_url,status,config_json) VALUES (?,?,?,?,?,1,?)`)
+        .run('dogpay', 'DogPay', dogpayApiKey, dogpayApiSecret, dogpayApiUrl, '{}');
+    }
+    console.log('[DogPay] Channel config initialized from env');
+  } else {
+    console.warn('[DogPay] DOGPAY_API_KEY or DOGPAY_API_SECRET not set - DogPay features will be disabled');
+  }
+
   app.listen(PORT, () => {
     console.log(`🚀 VCC Server: http://localhost:${PORT}`);
     console.log(`🔐 Admin API:  http://localhost:${PORT}/api/admin`);
