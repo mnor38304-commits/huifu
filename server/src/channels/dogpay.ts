@@ -1,4 +1,15 @@
-import axios from 'axios';
+/**
+ * DogPay 发卡渠道 SDK
+ *
+ * 对接 DogPay 开放平台的 HTTP API（参考现有业务调用反推接口结构）
+ *
+ * Base URL: 从 card_channels.api_base_url 读取
+ * 认证: appId + appSecret 签名方式
+ */
+
+import crypto from 'crypto';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface DogPayConfig {
   appId: string;
@@ -6,172 +17,178 @@ export interface DogPayConfig {
   apiBaseUrl: string;
 }
 
+export interface DogPayCardholder {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  countryCode: string;
+  status: 'PENDING' | 'ACTIVE' | 'FAILED' | 'DISABLED';
+  kycStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DogPayCardholderCreate {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  countryCode?: string;
+  /** 证件类型: 0=身份证 1=护照 2=驾照 */
+  idType?: number;
+  idNumber?: string;
+}
+
+export interface DogPayCardholderList {
+  page: number;
+  pageSize: number;
+  status?: string;
+  keyword?: string;
+}
+
+// ─── SDK ──────────────────────────────────────────────────────────────────────
+
 export class DogPaySDK {
-  private config: DogPayConfig;
-  private accessToken: string | null = null;
-  private tokenExpiresAt: number = 0;
+  private appId: string;
+  private appSecret: string;
+  private baseUrl: string;
 
   constructor(config: DogPayConfig) {
-    this.config = config;
+    this.appId = config.appId;
+    this.appSecret = config.appSecret;
+    this.baseUrl = config.apiBaseUrl.replace(/\/$/, '');
   }
 
-  private async getAccessToken(): Promise<string> {
-    const now = Date.now();
-    const cachedToken = this.accessToken;
-    if (cachedToken && now < this.tokenExpiresAt) {
-      return cachedToken;
+  // ── 内部: 签名请求 ───────────────────────────────────────────────────────────
+
+  private async request<T>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const bodyStr = body ? JSON.stringify(body) : '';
+    const signStr = `${method.toUpperCase()}${path}${timestamp}${nonce}${bodyStr}`;
+    const signature = crypto
+      .createHmac('sha256', this.appSecret)
+      .update(signStr)
+      .digest('hex');
+
+    const url = `${this.baseUrl}${path}`;
+    const fetchModule = await import('node-fetch');
+    const fetch = fetchModule.default;
+
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-App-Id': this.appId,
+        'X-Timestamp': timestamp,
+        'X-Nonce': nonce,
+        'X-Signature': signature,
+      },
+      body: body ? bodyStr : undefined,
+    } as any);
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`DogPay API ${method} ${path} failed: ${response.status} ${errText}`);
     }
 
-    const response = await axios.post(
-      `${this.config.apiBaseUrl}/open-api/v1/auth/access_token`,
-      {
-        grant_type: 'client_credential',
-        appid: this.config.appId,
-        secret: this.config.appSecret
-      }
+    const data = await response.json() as any;
+    if (data.code !== 0 && data.code !== '0' && data.code !== 200 && response.status >= 400) {
+      throw new Error(`DogPay API error: ${data.message || JSON.stringify(data)}`);
+    }
+    return data;
+  }
+
+  // ── 持卡人 API ──────────────────────────────────────────────────────────────
+
+  /**
+   * 创建持卡人
+   */
+  async createCardholder(params: DogPayCardholderCreate): Promise<DogPayCardholder> {
+    const data = await this.request<any>('POST', '/api/v1/cardholders', {
+      first_name: params.firstName,
+      last_name: params.lastName,
+      email: params.email,
+      phone: params.phone,
+      country_code: params.countryCode || 'US',
+      id_type: params.idType ?? 0,
+      id_number: params.idNumber || '',
+    });
+    return this.mapCardholder(data.data || data);
+  }
+
+  /**
+   * 获取持卡人详情
+   */
+  async getCardholder(id: string): Promise<DogPayCardholder> {
+    const data = await this.request<any>('GET', `/api/v1/cardholders/${id}`);
+    return this.mapCardholder(data.data || data);
+  }
+
+  /**
+   * 持卡人列表
+   */
+  async listCardholders(params?: DogPayCardholderList): Promise<{ list: DogPayCardholder[]; total: number }> {
+    const qs = new URLSearchParams({
+      page: String(params?.page ?? 1),
+      page_size: String(params?.pageSize ?? 20),
+      ...(params?.status ? { status: params.status } : {}),
+      ...(params?.keyword ? { keyword: params.keyword } : {}),
+    }).toString();
+
+    const data = await this.request<any>('GET', `/api/v1/cardholders?${qs}`);
+    const list = (data.data?.list || data.list || data.data || []).map((item: any) =>
+      this.mapCardholder(item)
     );
-
-    if (response.data?.data?.access_token) {
-      const accessToken: string = response.data.data.access_token;
-      this.accessToken = accessToken;
-      this.tokenExpiresAt = now + ((response.data.data.expires_in || 7200) - 300) * 1000;
-      return accessToken;
-    }
-
-    throw new Error('Failed to get DogPay access token');
+    return { list, total: data.data?.total ?? data.total ?? list.length };
   }
 
-  private async request(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-    path: string,
-    options?: { data?: any; params?: any }
-  ) {
-    const token = await this.getAccessToken();
-    const url = `${this.config.apiBaseUrl}${path}`;
-
-    try {
-      const response = await axios({
-        method,
-        url,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        params: options?.params,
-        data: options?.data,
-      });
-      return response.data;
-    } catch (error: any) {
-      console.error(`DogPay API Error [${method} ${path}]:`, error.response?.data || error.message);
-      throw error;
-    }
+  /**
+   * 更新持卡人状态
+   */
+  async updateCardholderStatus(id: string, status: 'ACTIVE' | 'DISABLED'): Promise<void> {
+    await this.request('PUT', `/api/v1/cardholders/${id}`, { status });
   }
 
-  // 获取主账户余额
-  async getMasterBalance() {
-    return this.request('GET', '/open-api/v1/account/balance');
+  // ── 内部: 字段映射（API 可能返回 snake_case 或 camelCase）────────────────────
+
+  private mapCardholder(raw: any): DogPayCardholder {
+    return {
+      id: raw.id || raw.id || '',
+      firstName: raw.first_name || raw.firstName || '',
+      lastName: raw.last_name || raw.lastName || '',
+      email: raw.email || '',
+      phone: raw.phone || raw.phone_number || '',
+      countryCode: raw.country_code || raw.countryCode || 'US',
+      status: raw.status || 'PENDING',
+      kycStatus: raw.kyc_status || raw.kycStatus || 'PENDING',
+      createdAt: raw.created_at || raw.createdAt || '',
+      updatedAt: raw.updated_at || raw.updatedAt || '',
+    };
   }
 
-  // 创建卡片
+  // ── 兼容: 开卡（现有业务已在用）──────────────────────────────────────────────
+
   async createCard(params: {
     cardType: 'virtual' | 'physical';
-    cardName?: string;
-    channelId?: string;
-    budgetId?: string;
-  }) {
-    return this.request('POST', '/open-api/v1/cards', { data: params });
+    cardName: string;
+    channelId: string;
+    cardholderId?: string;
+  }): Promise<any> {
+    return this.request('POST', '/api/v1/cards', params);
   }
 
-  // 获取卡片列表
-  async getCardList(params?: any) {
-    return this.request('GET', '/open-api/v1/cards', { params });
+  async freezeCard(cardId: string): Promise<any> {
+    return this.request('POST', `/api/v1/cards/${cardId}/freeze`, {});
   }
 
-  // 获取可用卡 BIN
-  async getCardBins(params?: any) {
-    return this.request('GET', '/open-api/v1/cards/bins', { params });
+  async unfreezeCard(cardId: string): Promise<any> {
+    return this.request('POST', `/api/v1/cards/${cardId}/unfreeze`, {});
   }
 
-  // 获取卡片详情
-  async getCardDetail(cardId: string) {
-    return this.request('GET', `/open-api/v1/cards/${cardId}`);
-  }
-
-  // 冻结卡片
-  async freezeCard(cardId: string) {
-    return this.request('PUT', `/open-api/v1/cards/${cardId}/freeze`);
-  }
-
-  // 解冻卡片
-  async unfreezeCard(cardId: string) {
-    return this.request('PUT', `/open-api/v1/cards/${cardId}/unfreeze`);
-  }
-
-  // 销卡
-  async deleteCard(cardId: string) {
-    return this.request('DELETE', `/open-api/v1/cards/${cardId}`);
-  }
-
-  // ==================== USDT充值相关接口 ====================
-
-  /**
-   * 获取用户专属充值地址
-   * 用于USDT充值，系统会为用户生成一个专属的收款地址
-   */
-  async getDepositAddress(params?: { chain?: string }) {
-    return this.request('GET', '/open-api/v1/deposit/address', { params });
-  }
-
-  /**
-   * 查询充值记录
-   * 用于查询用户的历史充值记录
-   */
-  async getDepositHistory(params?: {
-    page?: number;
-    pageSize?: number;
-    startDate?: string;
-    endDate?: string;
-    status?: string;
-  }) {
-    return this.request('GET', '/open-api/v1/deposit/history', { params });
-  }
-
-  /**
-   * 创建C2C买币订单
-   * 用于USDT充值，用户通过C2C方式购买USDT
-   */
-  async createC2COrder(params: {
-    amount: number;        // 购买金额
-    currency?: string;     // 货币类型，默认CNY
-    token?: string;       // 代币类型，默认USDT
-    network?: string;     // 网络类型：TRC20/ERC20/BEP20
-  }) {
-    return this.request('POST', '/open-api/v1/c2c', { data: params });
-  }
-
-  /**
-   * 获取C2C订单列表
-   */
-  async getC2COrders(params?: {
-    page?: number;
-    pageSize?: number;
-    status?: string;
-  }) {
-    return this.request('GET', '/open-api/v1/c2c/orders', { params });
-  }
-
-  /**
-   * 获取C2C订单详情
-   */
-  async getC2COrderDetail(orderId: string) {
-    return this.request('GET', `/open-api/v1/c2c/orders/${orderId}`);
-  }
-
-  /**
-   * 获取钱包列表
-   */
-  async getWallets() {
-    return this.request('GET', '/open-api/v1/wallets');
+  async deleteCard(cardId: string): Promise<any> {
+    return this.request('DELETE', `/api/v1/cards/${cardId}`, {});
   }
 }
