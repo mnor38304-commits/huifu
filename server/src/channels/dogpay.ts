@@ -196,8 +196,16 @@ export class DogPaySDK {
     return this.request('GET', '/api/v1/card-bins');
   }
 
-  async getDepositAddress(cardholderId: string): Promise<any> {
-    return this.request('GET', `/api/v1/cardholders/${cardholderId}/deposit-address`);
+  async getCardProducts(): Promise<any> {
+    return this.request('GET', '/api/v1/products');
+  }
+
+  async getDepositAddress(cardholderIdOrChain: string | { chain: string }): Promise<any> {
+    if (typeof cardholderIdOrChain === 'string') {
+      return this.request('GET', `/api/v1/cardholders/${cardholderIdOrChain}/deposit-address`);
+    }
+    // { chain: 'trx' | 'eth' | 'bnb' } — 全局充值地址
+    return this.request('GET', `/api/v1/deposit-address?chain=${cardholderIdOrChain.chain}`);
   }
 
   async createC2COrder(params: any): Promise<any> {
