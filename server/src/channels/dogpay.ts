@@ -63,7 +63,7 @@ export class DogPaySDK {
 
   // ── 内部: 签名请求 ───────────────────────────────────────────────────────────
 
-  private async request<T>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {
+  protected async request<T>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = crypto.randomBytes(8).toString('hex');
     const bodyStr = body ? JSON.stringify(body) : '';
@@ -74,8 +74,6 @@ export class DogPaySDK {
       .digest('hex');
 
     const url = `${this.baseUrl}${path}`;
-    const fetchModule = await import('node-fetch');
-    const fetch = fetchModule.default;
 
     const response = await fetch(url, {
       method,
@@ -190,5 +188,23 @@ export class DogPaySDK {
 
   async deleteCard(cardId: string): Promise<any> {
     return this.request('DELETE', `/api/v1/cards/${cardId}`, {});
+  }
+
+  // ── BIN / 充值 / C2C ─────────────────────────────────────────────────────
+
+  async getCardBins(): Promise<any> {
+    return this.request('GET', '/api/v1/card-bins');
+  }
+
+  async getDepositAddress(cardholderId: string): Promise<any> {
+    return this.request('GET', `/api/v1/cardholders/${cardholderId}/deposit-address`);
+  }
+
+  async createC2COrder(params: any): Promise<any> {
+    return this.request('POST', '/api/v1/c2c-orders', params);
+  }
+
+  async getC2COrderDetail(orderId: string): Promise<any> {
+    return this.request('GET', `/api/v1/c2c-orders/${orderId}`);
   }
 }
