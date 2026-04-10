@@ -123,7 +123,8 @@ router.get('/cardholders', async (req: AdminRequest, res: Response) => {
       params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
     }
 
-    const total = (db.prepare(sql.replace('SELECT *', 'SELECT COUNT(*) as c'), ...params).get(...params) as any).c;
+    const countSql = sql.replace('SELECT *', 'SELECT COUNT(*) as c');
+    const total = (db.prepare(countSql).get(...params) as any).c;
     sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
 
@@ -306,7 +307,8 @@ router.get('/bins', (req: AdminRequest, res: Response) => {
   if (brand) { sql += ' AND card_brand = ?'; params.push(brand); }
   if (currency) { sql += ' AND currency = ?'; params.push(currency); }
 
-  const total = (db.prepare(sql.replace('SELECT *', 'SELECT COUNT(*) as c'), ...params).get(...params) as any).c;
+  const countSql2 = sql.replace('SELECT *', 'SELECT COUNT(*) as c');
+  const total = (db.prepare(countSql2).get(...params) as any).c;
   sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
 
@@ -417,7 +419,7 @@ router.post('/channels/dogpay/sync-bins', async (req: AdminRequest, res: Respons
   }
 
   try {
-    const data = await sdk.request<any>('GET', '/api/v1/products', {});
+    const data = await sdk.getCardProducts();
     const products = data.data?.list || data.list || [];
 
     let synced = 0;
