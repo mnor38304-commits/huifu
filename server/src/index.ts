@@ -83,6 +83,12 @@ async function start() {
   // 初始化钱包表
   initWalletTables();
 
+  // ── 数据库迁移：补充缺失字段 ──────────────────────────────────
+  try { db.run('ALTER TABLE card_channels ADD COLUMN priority INTEGER DEFAULT 99'); } catch (_) {}
+  try { db.run('ALTER TABLE card_channels ADD COLUMN api_key VARCHAR(500)'); } catch (_) {}
+  try { db.run('ALTER TABLE card_channels ADD COLUMN api_secret VARCHAR(500)'); } catch (_) {}
+  try { db.run('ALTER TABLE cards ADD COLUMN uqpay_cardholder_id VARCHAR(100)'); } catch (_) {}
+
   // 初始化默认 BIN
   const binCount = (db.prepare('SELECT COUNT(*) as c FROM card_bins').get() as any).c;
   if (binCount === 0) {
