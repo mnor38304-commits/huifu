@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -14,6 +14,7 @@ import transactionRoutes from './routes/transactions';
 import billRoutes from './routes/bills';
 import noticeRoutes from './routes/notices';
 import walletRoutes, { initWalletTables } from './routes/client-wallet';
+import uploadRoutes from './routes/upload';
 
 // 管理员路由
 import adminAuthRoutes from './routes/admin-auth';
@@ -28,15 +29,24 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // ✅ FIX: CORS 配置白名单，不允许所有来源跨域请求
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',');
+// 规范化 origin：去掉尾部斜杠再匹配（部分浏览器/代理会多带 /）
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map(o => o.replace(/\/+$/, ''))
+  .filter(Boolean);
 app.use(cors({
   origin: (origin: string | undefined, callback) => {
     // 允许没有 Origin 的请求（如 Postman/服务端间调用）
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin) {
       callback(null, true);
     } else {
-      console.warn(`[CORS] Blocked request from origin: ${origin}`);
-      callback(new Error(`Origin ${origin} not allowed by CORS policy`));
+      const normalized = origin.replace(/\/+$/, '');
+      if (allowedOrigins.includes(normalized)) {
+        callback(null, true);
+      } else {
+        console.warn(`[CORS] Blocked request from origin: ${origin}`);
+        callback(new Error(`Origin ${origin} not allowed by CORS policy`));
+      }
     }
   },
   credentials: true
@@ -60,6 +70,7 @@ app.use('/api/v1/transactions', transactionRoutes);
 app.use('/api/v1/bills', billRoutes);
 app.use('/api/v1/notices', noticeRoutes);
 app.use('/api/v1/wallet', walletRoutes);
+app.use('/api/v1/upload', uploadRoutes);
 
 // ── 管理员 API ────────────────────────────────────────────────
 app.use('/api/admin/auth', adminAuthRoutes);
@@ -87,7 +98,22 @@ async function start() {
   try { db.prepare('ALTER TABLE card_channels ADD COLUMN priority INTEGER DEFAULT 99').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE card_channels ADD COLUMN api_key VARCHAR(500)').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE card_channels ADD COLUMN api_secret VARCHAR(500)').run(); } catch (_) {}
+  try { db.prepare('ALTER TABLE cards ADD COLUMN channel_code VARCHAR(50)').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE cards ADD COLUMN uqpay_cardholder_id VARCHAR(100)').run(); } catch (_) {}
+
+  // 初始化默认管理员账号
+  const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
+  if (adminCount === 0) {
+    const adminPassword = await bcrypt.hash('admin123', 10);
+    db.prepare('INSERT INTO admins (username, password_hash, salt, real_name, role, status) VALUES (?, ?, ?, ?, ?, 1)').run(
+      'admin',
+      adminPassword,
+      'default_salt',
+      '系统管理员',
+      'super'
+    );
+    console.log('✅ Default admin account created (username: admin, password: admin123)');
+  }
 
   // 初始化默认 BIN
   const binCount = (db.prepare('SELECT COUNT(*) as c FROM card_bins').get() as any).c;
@@ -117,4 +143,3 @@ async function start() {
 }
 
 start().catch(e => { console.error(e); process.exit(1); });
-

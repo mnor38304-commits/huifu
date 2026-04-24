@@ -139,8 +139,9 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
     });
 
     verificationCodes.set(email, { code, expires: Date.now() + 5 * 60 * 1000 });
-
-    return res.json({ code: 0, message: '验证码已发送至邮箱', timestamp: Date.now() });
+    // 打印验证码到日志（开发环境）
+    console.log(`[Email] 验证码已发送至 ${email}: ${code}`);
+    return res.json({ code: 0, message: '验证码已发送至邮箱', data: { mockCode: code }, timestamp: Date.now() });;
   } catch (err: any) {
     console.error(`[Email] 验证码发送失败: ${email}`, err);
     return res.status(500).json({
@@ -155,64 +156,108 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
 
 // 用户注册
 router.post('/register', async (req, res: Response<ApiResponse>) => {
-  const { phone, email, password, code } = req.body;
+  try {
+    const { phone, email, password, code } = req.body;
 
-  if (!password || password.length < 6) {
-    return res.json({ code: 400, message: '密码至少6位', timestamp: Date.now() });
-  }
+    if (!password || password.length < 6) {
+      return res.json({ code: 400, message: '密码至少6位', timestamp: Date.now() });
+    }
 
-  if (!phone && !email) {
-    return res.json({ code: 400, message: '请输入手机号或邮箱', timestamp: Date.now() });
-  }
+    if (!phone && !email) {
+      return res.json({ code: 400, message: '请输入手机号或邮箱', timestamp: Date.now() });
+    }
 
-  const account = phone || email;
+    const account = phone || email;
 
-  // 验证验证码
-  const storedCode = verificationCodes.get(account);
-  if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
-    return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
-  }
+    // 验证验证码
+    const storedCode = verificationCodes.get(account);
+    if (!storedCode || storedCode.code !== code || storedCode.expires < Date.now()) {
+      return res.json({ code: 400, message: '验证码无效或已过期', timestamp: Date.now() });
+    }
 
-  // 检查账号是否已存在
-  const existing = db.prepare('SELECT id FROM users WHERE phone = ? OR email = ?').get(phone, email);
-  if (existing) {
-    return res.json({ code: 400, message: '该账号已注册', timestamp: Date.now() });
-  }
+    // 检查账号是否已存在
+    const existing = db.prepare('SELECT id FROM users WHERE phone = ? OR email = ?').get(phone, email);
+    if (existing) {
+      return res.json({ code: 400, message: '该账号已注册', timestamp: Date.now() });
+    }
 
-  // 创建用户
-  const salt = await bcrypt.genSalt(12);
-  const passwordHash = await bcrypt.hash(password, salt);
-  const userNo = generateUserNo();
+    // 创建用户 - 使用 Promise 包装 bcryptjs 的回调 API
+    console.log('[Register] 开始生成 salt...');
+    const salt = await new Promise<string>((resolve, reject) => {
+      bcrypt.genSalt(12, (err, salt) => {
+        console.log('[Register] genSalt 回调:', { err: err?.message, saltLength: salt?.length });
+        if (err) reject(err);
+        else resolve(salt);
+      });
+    });
+    console.log('[Register] salt 完成:', salt?.length);
+    
+    console.log('[Register] 开始生成 hash...');
+    const passwordHash = await new Promise<string>((resolve, reject) => {
+      bcrypt.hash(password, salt, (err, hash) => {
+        console.log('[Register] hash 回调:', { err: err?.message, hashLength: hash?.length });
+        if (err) reject(err);
+        else resolve(hash);
+      });
+    });
+    console.log('[Register] hash 完成:', passwordHash?.length);
+    
+    const userNo = generateUserNo();
+    console.log('[Register] userNo 生成:', userNo);
+    
+    // 调试日志
+    console.log('[Register] 准备插入数据库:', {
+      userNo,
+      phone: phone || null,
+      email: email || null,
+      passwordHashLength: passwordHash?.length,
+      saltLength: salt?.length,
+      passwordHashType: typeof passwordHash,
+      saltType: typeof salt,
+      passwordHashFirst20: passwordHash?.substring(0, 20),
+      saltFirst20: salt?.substring(0, 20)
+    });
 
-  const result = db.prepare(`
-    INSERT INTO users (user_no, phone, email, password_hash, salt, status, kyc_status)
-    VALUES (?, ?, ?, ?, ?, 1, 0)
-  `).run(userNo, phone || null, email || null, passwordHash, salt);
+    console.log('[Register] 执行 INSERT...');
+    const result = db.prepare(`
+      INSERT INTO users (user_no, phone, email, password_hash, salt, status, kyc_status)
+      VALUES (?, ?, ?, ?, ?, 1, 0)
+    `).run(userNo, phone || null, email || null, passwordHash, salt);
+    console.log('[Register] INSERT 成功:', result.lastInsertRowid);
 
-  const token = generateToken({ userId: result.lastInsertRowid as number, userNo });
+    const token = generateToken({ userId: result.lastInsertRowid as number, userNo });
 
-  verificationCodes.delete(account);
+    verificationCodes.delete(account);
 
-  // ✅ FIX: 登录成功后写入 httpOnly Cookie，防止 XSS 窃取 token
-  setAuthCookie(res, token);
+    // ✅ FIX: 登录成功后写入 httpOnly Cookie，防止 XSS 窃取 token
+    setAuthCookie(res, token);
 
-  // 注册成功 - 发送邮件通知（不阻塞注册流程）
-  if (email) {
-    void sendEmail({
-      to: email,
-      subject: '🎉 注册成功 - VCC虚拟卡系统',
-      html: regSuccessTemplate(userNo, phone || email)
-    }).catch(err => {
-      console.error(`[Email] 注册成功通知发送失败: ${email}`, err);
+    // 注册成功 - 发送邮件通知（不阻塞注册流程）
+    if (email) {
+      void sendEmail({
+        to: email,
+        subject: '🎉 注册成功 - VCC虚拟卡系统',
+        html: regSuccessTemplate(userNo, phone || email)
+      }).catch(err => {
+        console.error(`[Email] 注册成功通知发送失败: ${email}`, err);
+      });
+    }
+
+    res.json({
+      code: 0,
+      message: '注册成功',
+      data: { userNo },
+      timestamp: Date.now()
+    });
+  } catch (err: any) {
+    console.error('[Register] 注册失败:', err?.message || err);
+    console.error('[Register] 完整错误:', err);
+    res.status(500).json({
+      code: 500,
+      message: '注册失败，请稍后重试',
+      timestamp: Date.now()
     });
   }
-
-  res.json({
-    code: 0,
-    message: '注册成功',
-    data: { userNo },
-    timestamp: Date.now()
-  });
 });
 
 // 用户登录
@@ -233,7 +278,12 @@ router.post('/login', async (req, res: Response<ApiResponse>) => {
     return res.json({ code: 400, message: '账号已被禁用', timestamp: Date.now() });
   }
 
-  const validPassword = await bcrypt.compare(password, user.password_hash);
+  const validPassword = await new Promise<boolean>((resolve, reject) => {
+    bcrypt.compare(password, user.password_hash, (err, isMatch) => {
+      if (err) reject(err);
+      else resolve(isMatch);
+    });
+  });
   if (!validPassword) {
     return res.json({ code: 400, message: '密码错误', timestamp: Date.now() });
   }
@@ -270,8 +320,19 @@ router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
     return res.json({ code: 400, message: '账号不存在', timestamp: Date.now() });
   }
 
-  const salt = await bcrypt.genSalt(12);
-  const passwordHash = await bcrypt.hash(newPassword, salt);
+  const salt = await new Promise<string>((resolve, reject) => {
+    bcrypt.genSalt(12, (err, salt) => {
+      if (err) reject(err);
+      else resolve(salt);
+    });
+  });
+  
+  const passwordHash = await new Promise<string>((resolve, reject) => {
+    bcrypt.hash(newPassword, salt, (err, hash) => {
+      if (err) reject(err);
+      else resolve(hash);
+    });
+  });
 
   db.prepare('UPDATE users SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, salt, user.id);
 

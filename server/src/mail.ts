@@ -1,92 +1,84 @@
-import nodemailer from 'nodemailer'
+import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
-interface EmailOptions {
-  to: string
-  subject: string
-  html: string
+let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedTransportKey = '';
+
+function getClientUrl(): string {
+  return process.env.CLIENT_URL || 'http://localhost:5173';
 }
 
-interface MailConfig {
-  host: string
-  port: number
-  secure: boolean
-  user: string
-  pass: string
-  from: string
-  fromName: string
+// ── Resend ─────────────────────────────────────────────────────────────────
+async function sendViaResend({ to, subject, html }: { to: string; subject: string; html: string }): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const from   = process.env.RESEND_FROM?.trim() || 'Cardgolink <noreply@cardgolink.com>';
+  if (!apiKey) throw new Error('RESEND_API_KEY 未配置');
+  const resend = new Resend(apiKey);
+  const { data, error } = await resend.emails.send({ from, to, subject, html });
+  if (error) {
+    console.error('❌ Resend 邮件发送失败:', error);
+    throw new Error(error.message || '邮件发送失败');
+  }
+  console.log(`✅ 邮件发送成功 (Resend): ${to} (${data?.id})`);
 }
 
-let cachedTransporter: nodemailer.Transporter | null = null
-let cachedTransportKey = ''
-
-function getClientUrl() {
-  return process.env.CLIENT_URL || 'http://localhost:5173'
-}
-
-function getMailConfig(): MailConfig {
-  const host = process.env.SMTP_HOST?.trim()
-  const user = process.env.SMTP_USER?.trim()
-  const pass = process.env.SMTP_PASS?.trim()
-  const from = (process.env.SMTP_FROM || user || '').trim()
-  const fromName = (process.env.SMTP_FROM_NAME || 'VCC虚拟卡系统').trim()
-  const port = Number(process.env.SMTP_PORT || 465)
-  const secure = String(process.env.SMTP_SECURE || port === 465).toLowerCase() === 'true'
-
+// ── SMTP fallback ──────────────────────────────────────────────────────────
+function getMailConfig() {
+  const host   = process.env.SMTP_HOST?.trim();
+  const user   = process.env.SMTP_USER?.trim();
+  const pass   = process.env.SMTP_PASS?.trim();
+  const from   = (process.env.SMTP_FROM || user || '').trim();
+  const fromName = (process.env.SMTP_FROM_NAME || 'VCC虚拟卡系统').trim();
+  const port   = Number(process.env.SMTP_PORT || 465);
+  const secure = String(process.env.SMTP_SECURE || String(port === 465)).toLowerCase() === 'true';
   if (!host || !user || !pass || !from) {
-    throw new Error('SMTP 未配置完整，请设置 SMTP_HOST、SMTP_PORT、SMTP_USER、SMTP_PASS、SMTP_FROM')
+    throw new Error('SMTP 未配置完整，请设置 SMTP_HOST、SMTP_PORT、SMTP_USER、SMTP_PASS、SMTP_FROM');
   }
-
   if (!Number.isInteger(port) || port <= 0) {
-    throw new Error('SMTP_PORT 配置无效')
+    throw new Error('SMTP_PORT 配置无效');
   }
-
-  return { host, port, secure, user, pass, from, fromName }
+  return { host, port, secure, user, pass, from, fromName };
 }
 
-function getTransporter(config: MailConfig) {
-  const transportKey = [config.host, config.port, config.secure, config.user].join('|')
-
+function getTransporter(config: ReturnType<typeof getMailConfig>): nodemailer.Transporter {
+  const transportKey = [config.host, config.port, config.secure, config.user].join('|');
   if (!cachedTransporter || cachedTransportKey !== transportKey) {
     cachedTransporter = nodemailer.createTransport({
       host: config.host,
       port: config.port,
       secure: config.secure,
-      auth: {
-        user: config.user,
-        pass: config.pass
-      },
+      auth: { user: config.user, pass: config.pass },
       connectionTimeout: 15000,
       greetingTimeout: 15000,
       socketTimeout: 20000
-    })
-    cachedTransportKey = transportKey
+    });
+    cachedTransportKey = transportKey;
   }
-
-  return cachedTransporter
+  return cachedTransporter;
 }
 
-export async function sendEmail({ to, subject, html }: EmailOptions): Promise<void> {
-  const config = getMailConfig()
-  const transporter = getTransporter(config)
+async function sendViaSMTP({ to, subject, html }: { to: string; subject: string; html: string }): Promise<void> {
+  const config = getMailConfig();
+  const transporter = getTransporter(config);
+  const info = await transporter.sendMail({
+    from: `"${config.fromName}" <${config.from}>`,
+    to, subject, html
+  });
+  console.log(`✅ 邮件发送成功 (SMTP): ${to} (${info.messageId})`);
+}
 
-  try {
-    const info = await transporter.sendMail({
-      from: `"${config.fromName}" <${config.from}>`,
-      to,
-      subject,
-      html
-    })
-
-    console.log(`✅ 邮件发送成功: ${to} (${info.messageId})`)
-  } catch (err: any) {
-    console.error(`❌ 邮件发送失败: ${to}`, err)
-    throw new Error(err?.message || '邮件发送失败')
+// ── 统一入口 ─────────────────────────────────────────────────────────────────
+export async function sendEmail({ to, subject, html }: { to: string; subject: string; html: string }): Promise<void> {
+  // 优先 Resend
+  if (process.env.RESEND_API_KEY?.trim()) {
+    await sendViaResend({ to, subject, html });
+  } else {
+    // fallback SMTP
+    await sendViaSMTP({ to, subject, html });
   }
 }
 
-// ── 邮件模板 ──────────────────────────────────────────────────
-
-export function verificationCodeTemplate(code: string) {
+export function verificationCodeTemplate(code: string): string {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#1890ff;padding:24px;text-align:center;">
@@ -104,10 +96,10 @@ export function verificationCodeTemplate(code: string) {
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
-  `
+  `;
 }
 
-export function regSuccessTemplate(userNo: string, phone: string) {
+export function regSuccessTemplate(userNo: string, phone: string): string {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#1890ff;padding:24px;text-align:center;">
@@ -127,10 +119,10 @@ export function regSuccessTemplate(userNo: string, phone: string) {
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
-  `
+  `;
 }
 
-export function passwordResetTemplate(code: string) {
+export function passwordResetTemplate(code: string): string {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#faad14;padding:24px;text-align:center;">
@@ -149,10 +141,10 @@ export function passwordResetTemplate(code: string) {
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
-  `
+  `;
 }
 
-export function cardOpenedTemplate(cardNo: string, cardName: string, creditLimit: number) {
+export function cardOpenedTemplate(cardNo: string, cardName: string, creditLimit: number): string {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#52c41a;padding:24px;text-align:center;">
@@ -172,10 +164,10 @@ export function cardOpenedTemplate(cardNo: string, cardName: string, creditLimit
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
-  `
+  `;
 }
 
-export function topupSuccessTemplate(cardNo: string, amount: number, balance: number) {
+export function topupSuccessTemplate(cardNo: string, amount: number, balance: number): string {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#1890ff;padding:24px;text-align:center;">
@@ -195,10 +187,10 @@ export function topupSuccessTemplate(cardNo: string, amount: number, balance: nu
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
-  `
+  `;
 }
 
-export function transactionDeclinedTemplate(cardNo: string, merchant: string, amount: number, reason: string) {
+export function transactionDeclinedTemplate(cardNo: string, merchant: string, amount: number, reason: string): string {
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#ff4d4f;padding:24px;text-align:center;">
@@ -219,11 +211,11 @@ export function transactionDeclinedTemplate(cardNo: string, merchant: string, am
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
-  `
+  `;
 }
 
-export function balanceChangeTemplate(cardNo: string, type: string, amount: number, balance: number) {
-  const color = type === '消费' ? '#ff4d4f' : type === '退款' ? '#52c41a' : '#1890ff'
+export function balanceChangeTemplate(cardNo: string, type: string, amount: number, balance: number): string {
+  const color = type === '消费' ? '#ff4d4f' : type === '退款' ? '#52c41a' : '#1890ff';
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:${color};padding:24px;text-align:center;">
@@ -244,5 +236,5 @@ export function balanceChangeTemplate(cardNo: string, type: string, amount: numb
         <p style="margin:0;">© ${new Date().getFullYear()} VCC虚拟卡系统</p>
       </div>
     </div>
-  `
+  `;
 }

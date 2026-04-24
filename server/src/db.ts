@@ -268,14 +268,21 @@ export default {
     const database = getDb();
     return {
       run: (...params: any[]) => {
-        database.run(sql, params);
-        saveDatabase();
+        // ✅ FIX: 使用展开操作符传递参数给 sql.js
+        // ✅ FIX: 过滤掉 undefined 值，转换为 null
+        const cleanParams = params.map(p => p === undefined ? null : p);
+        database.run(sql, cleanParams);
         const r = database.exec('SELECT last_insert_rowid() as id');
-        return { lastInsertRowid: r[0]?.values[0]?.[0] || 0 };
+        const lastId = Number(r[0]?.values[0]?.[0] ?? 0);
+        saveDatabase();
+        return { lastInsertRowid: lastId };
       },
       get: (...params: any[]) => {
         const stmt = database.prepare(sql);
-        stmt.bind(params);
+        // ✅ FIX: 使用展开操作符传递参数给 stmt.bind()
+        // ✅ FIX: 过滤掉 undefined 值，转换为 null
+        const cleanParams = params.map(p => p === undefined ? null : p);
+        stmt.bind(cleanParams.length > 0 ? cleanParams : []);
         if (stmt.step()) {
           const cols = stmt.getColumnNames();
           const vals = stmt.get();
@@ -289,7 +296,10 @@ export default {
       },
       all: (...params: any[]) => {
         const stmt = database.prepare(sql);
-        stmt.bind(params);
+        // ✅ FIX: 使用展开操作符传递参数给 stmt.bind()
+        // ✅ FIX: 过滤掉 undefined 值，转换为 null
+        const cleanParams = params.map(p => p === undefined ? null : p);
+        stmt.bind(cleanParams.length > 0 ? cleanParams : []);
         const results: any[] = [];
         const cols = stmt.getColumnNames();
         while (stmt.step()) {

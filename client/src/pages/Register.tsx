@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Form, Input, Button, Card, message, Tabs } from 'antd'
-import { LockOutlined, MobileOutlined, MailOutlined, SafetyOutlined } from '@ant-design/icons'
+import { Form, Input, Button, Card, message, Tabs, Result } from 'antd'
+import { LockOutlined, MobileOutlined, MailOutlined, SafetyOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { register, sendSms, sendEmail } from '../services/api'
 
@@ -9,6 +9,7 @@ const Register: React.FC = () => {
   const [sendingCode, setSendingCode] = useState(false)
   const [countdown, setCountdown] = useState(0)
   const [activeTab, setActiveTab] = useState('phone')
+  const [registered, setRegistered] = useState(false)
   const navigate = useNavigate()
   const [form] = Form.useForm()
 
@@ -55,8 +56,8 @@ const Register: React.FC = () => {
 
       const res = await register(data)
       if (res.code === 0) {
-        message.success('注册成功，请登录')
-        navigate('/login')
+        message.success('注册成功！')
+        setRegistered(true)
       } else {
         message.error(res.message)
       }
@@ -90,10 +91,41 @@ const Register: React.FC = () => {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f5f5' }}>
       <Card style={{ width: 400, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 8 }}>注册 VCC 账户</h1>
-          <p style={{ color: '#666' }}>创建您的虚拟卡管理账户</p>
-        </div>
+        {registered ? (
+          <Result
+            status="success"
+            icon={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+            title="注册成功！"
+            subTitle={
+              <div>
+                <p style={{ margin: '8px 0', color: '#666' }}>
+                  欢迎加入 VCC 虚拟卡管理平台，请尽快完成实名认证以解锁全部功能。
+                </p>
+                <div style={{
+                  background: '#fff7e6',
+                  border: '1px solid #ffd591',
+                  borderRadius: 8,
+                  padding: '12px 16px',
+                  marginTop: 8,
+                  marginBottom: 8,
+                }}>
+                  <strong style={{ color: '#fa8c16' }}>实名认证说明</strong>
+                  <ul style={{ margin: '8px 0 0', paddingLeft: 18, color: '#666', fontSize: 13 }}>
+                    <li>登录后前往「设置 → 实名认证」提交资料</li>
+                    <li>需提供有效证件信息进行身份核验</li>
+                    <li>认证通过后方可开通虚拟卡服务</li>
+                  </ul>
+                </div>
+              </div>
+            }
+            extra={[
+              <Button type="primary" key="login" size="large" onClick={() => navigate('/login')} block>
+                立即登录
+              </Button>,
+            ]}
+          />
+        ) : (
+        <>
 
         <Form form={form} onFinish={onFinish} size="large">
           <Tabs activeKey={activeTab} onChange={handleTabChange} items={tabItems} />
@@ -147,6 +179,8 @@ const Register: React.FC = () => {
           <span style={{ color: '#666' }}>已有账号？</span>
           <a onClick={() => navigate('/login')}>立即登录</a>
         </div>
+        </>
+        )}
       </Card>
     </div>
   )

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Form, Input, Button, Card, message, Tabs, Divider } from 'antd'
 import { UserOutlined, LockOutlined, MobileOutlined, MailOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { login, sendSms, sendEmail } from '../services/api'
+import { login, getUserInfo, sendSms, sendEmail } from '../services/api'
 
 interface LoginProps {
   onLogin: (user: any) => void
@@ -51,9 +51,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     try {
       const res = await login(values.account, values.password)
       if (res.code === 0) {
-        localStorage.setItem('token', res.data.token)
+        // Token 已由后端写入 httpOnly Cookie，无需前端存储
         message.success('登录成功')
-        onLogin(res.data)
+        // 登录成功后重新拉取用户信息（Cookie 会自动携带）
+        const meRes = await getUserInfo()
+        onLogin(meRes.code === 0 ? meRes.data : res.data)
         navigate('/')
       } else {
         message.error(res.message)
@@ -80,6 +82,17 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           
           <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="密码" />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <a
+                onClick={() => navigate('/forgot-password')}
+                style={{ fontSize: 13, color: '#1677ff' }}
+              >
+                忘记密码？
+              </a>
+            </div>
           </Form.Item>
           
           <Form.Item>

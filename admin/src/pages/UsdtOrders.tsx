@@ -42,27 +42,16 @@ export default function UsdtOrders() {
     else message.error(r.message)
   }
 
-  // 同步DogPay订单状态
   const handleSyncOrder = async (order: any) => {
-    if (!order.dogpay_order_id) {
-      message.warning('该订单未对接DogPay')
-      return
-    }
+    if (!order.dogpay_order_id) { message.warning('该订单未对接DogPay'); return }
     setSyncing(order.id)
     try {
       const r: any = await syncUsdtOrder(order.id)
-      if (r.code === 0) {
-        message.success('状态同步成功')
-        load()
-        loadStats()
-      } else {
-        message.error(r.message || '同步失败')
-      }
+      if (r.code === 0) { message.success('状态同步成功'); load(); loadStats() }
+      else message.error(r.message || '同步失败')
     } catch (e: any) {
       message.error(e.response?.data?.message || '同步失败')
-    } finally {
-      setSyncing(null)
-    }
+    } finally { setSyncing(null) }
   }
 
   const cols = [
@@ -91,7 +80,7 @@ export default function UsdtOrders() {
               同步
             </Button>
           )}
-          {r.status === 0 || r.status === 1 ? (
+          {(r.status === 0 || r.status === 1) ? (
             <Button type="primary" size="small" icon={<CheckCircleOutlined />} onClick={() => setConfirmModal({ visible: true, record: r })}>
               确认
             </Button>

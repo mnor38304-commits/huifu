@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Space, Card, Modal, Form, Input, Select, message, Descriptions, Popconfirm } from 'antd'
+import { Table, Button, Tag, Space, Card, Modal, Form, Input, Select, message, Popconfirm } from 'antd'
 import { PlusOutlined, EditOutlined, ApiOutlined, SyncOutlined } from '@ant-design/icons'
 import { getChannels, createChannel, updateChannel, syncDogPayBins } from '../api'
 
 const { Option } = Select
+
+// CoinPal 是 USDT 收款渠道，不在发卡渠道列表里显示
+const USDT_CHANNELS = ['COINPAL']
 
 export default function Channels() {
   const [list, setList] = useState<any[]>([])
@@ -11,7 +14,8 @@ export default function Channels() {
   const [modalVisible, setModalVisible] = useState(false)
   const [editRecord, setEditRecord] = useState<any>(null)
   const [form] = Form.useForm()
-  const [syncing, setSyncing] = useState(false)
+  // 每个渠道独立的 syncing 状态，key 为 channel.id
+  const [syncingId, setSyncingId] = useState<number | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -38,26 +42,29 @@ export default function Channels() {
     } catch (e: any) { message.error(e.response?.data?.message || '操作失败') }
   }
 
-  // 同步DogPay渠道的BIN
-  const handleSyncBins = async () => {
-    setSyncing(true)
+  // 同步指定渠道的 BIN（目前后端只支持 DogPay，后续可扩展）
+  const handleSyncBins = async (ch: any) => {
+    setSyncingId(ch.id)
     try {
       const r: any = await syncDogPayBins()
       if (r.code === 0) {
-        message.success(`BIN同步成功！新增: ${r.data?.synced || 0} 个`)
+        message.success(`[${ch.channel_name}] BIN 同步成功！新增: ${r.data?.synced || 0} 个`)
       } else {
         message.error(r.message || '同步失败')
       }
     } catch (e: any) {
       message.error(e.response?.data?.message || '同步失败')
     } finally {
-      setSyncing(false)
+      setSyncingId(null)
     }
   }
 
   const channelLogos: Record<string, string> = {
     AIRWALLEX: '🌐', PHOTON: '⚡', DOGPAY: '🐕', CUSTOM: '🔧'
   }
+
+  // 只展示发卡渠道（排除 USDT 收款渠道）
+  const cardChannels = list.filter(ch => !USDT_CHANNELS.includes(ch.channel_code?.toUpperCase()))
 
   const cols = [
     { title: '渠道代码', dataIndex: 'channel_code', key: 'channel_code', width: 130,
@@ -66,8 +73,24 @@ export default function Channels() {
     { title: 'API地址', dataIndex: 'api_base_url', key: 'api_base_url' },
     { title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (v: number) => <Tag color={v===1?'green':'default'}>{v===1?'已启用':'已禁用'}</Tag> },
-    { title: '操作', key: 'action', width: 100,
-      render: (_: any, r: any) => <Button type="link" size="small" onClick={() => openEdit(r)}><EditOutlined /> 配置</Button> }
+    { title: '操作', key: 'action', width: 160,
+      render: (_: any, r: any) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => openEdit(r)}><EditOutlined /> 配置</Button>
+          <Popconfirm
+            title={`同步 [${r.channel_name}] 卡 BIN？`}
+            description="将从渠道接口拉取最新卡 BIN 数据并同步到本地。"
+            onConfirm={() => handleSyncBins(r)}
+            okText="同步"
+            cancelText="取消"
+          >
+            <Button type="link" size="small" loading={syncingId === r.id} icon={<SyncOutlined spin={syncingId === r.id} />}>
+              同步卡Bin
+            </Button>
+          </Popconfirm>
+        </Space>
+      )
+    }
   ]
 
   return (
@@ -75,51 +98,81 @@ export default function Channels() {
       <div style={{ marginBottom: 16, padding: '16px 20px', background: '#fff7e6', borderRadius: 8, border: '1px solid #ffd591' }}>
         <strong>💡 渠道对接说明</strong>
         <p style={{ margin: '8px 0 0', color: '#666', fontSize: 13 }}>
-          支持对接空中云汇（Airwallex）、光子易（Photon）等主流虚拟卡发卡渠道。
-          配置 API Key 和 Secret 后，系统将自动通过渠道 API 完成开卡、充值、交易等操作。
-          Webhook 密钥用于验证渠道回调通知的真实性。
+          此处管理发卡渠道对接（DogPay、空中云汇、光子易等虚拟卡发卡通道）。
+          配置 API Key 和 Secret 后，系统将通过渠道 API 完成开卡、充值、交易等操作。
+          每个渠道可单独点击「同步卡Bin」从渠道接口拉取最新 BIN 数据。
+          USDT 收款渠道（CoinPal）请在左侧菜单「USDT充值 → 收款渠道设置」中配置。
         </p>
       </div>
 
       <Card style={{ borderRadius: 8 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <span style={{ fontSize: 16, fontWeight: 600 }}>卡渠道管理</span>
-          <Space>
-            <Button icon={<SyncOutlined spin={syncing} />} onClick={handleSyncBins} loading={syncing}>
-              同步BIN
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>添加渠道</Button>
-          </Space>
+          <span style={{ fontSize: 16, fontWeight: 600 }}>发卡渠道管理</span>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>添加渠道</Button>
         </div>
 
+        {/* 渠道卡片区：每张卡片底部独立显示「同步卡Bin」操作 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
-          {list.map(ch => (
-            <Card key={ch.id} size="small" style={{ borderRadius: 8, border: ch.status===1?'1px solid #52c41a':'1px solid #d9d9d9' }}
-              extra={<Button type="link" size="small" onClick={() => openEdit(ch)}>配置</Button>}>
+          {cardChannels.map(ch => (
+            <Card
+              key={ch.id}
+              size="small"
+              style={{ borderRadius: 8, border: ch.status===1 ? '1px solid #52c41a' : '1px solid #d9d9d9' }}
+              extra={<Button type="link" size="small" onClick={() => openEdit(ch)}><EditOutlined /> 配置</Button>}
+              actions={[
+                <Popconfirm
+                  key="sync"
+                  title={`同步 [${ch.channel_name}] 卡 BIN？`}
+                  description="将从渠道接口拉取最新卡 BIN 数据并同步到本地。"
+                  onConfirm={() => handleSyncBins(ch)}
+                  okText="同步"
+                  cancelText="取消"
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<SyncOutlined spin={syncingId === ch.id} />}
+                    loading={syncingId === ch.id}
+                    style={{ color: '#1890ff' }}
+                  >
+                    同步卡Bin
+                  </Button>
+                </Popconfirm>
+              ]}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: 32 }}>{channelLogos[ch.channel_code] || '🔌'}</div>
                 <div>
                   <div style={{ fontWeight: 600 }}>{ch.channel_name}</div>
                   <div style={{ fontSize: 12, color: '#999' }}>{ch.channel_code}</div>
-                  <Tag color={ch.status===1?'green':'default'} style={{ marginTop: 4 }}>{ch.status===1?'已启用':'已禁用'}</Tag>
+                  <Tag color={ch.status===1 ? 'green' : 'default'} style={{ marginTop: 4 }}>
+                    {ch.status===1 ? '已启用' : '已禁用'}
+                  </Tag>
                 </div>
               </div>
-              <div style={{ marginTop: 12, fontSize: 12, color: '#666', wordBreak: 'break-all' }}>{ch.api_base_url}</div>
+              <div style={{ marginTop: 12, fontSize: 12, color: '#666', wordBreak: 'break-all' }}>
+                {ch.api_base_url}
+              </div>
             </Card>
           ))}
+          {cardChannels.length === 0 && !loading && (
+            <div style={{ gridColumn: '1/-1', textAlign: 'center', color: '#999', padding: '40px 0' }}>
+              暂无发卡渠道，点击右上角「添加渠道」开始对接
+            </div>
+          )}
         </div>
 
-        <Table columns={cols} dataSource={list} rowKey="id" loading={loading} pagination={false} />
+        <Table columns={cols} dataSource={cardChannels} rowKey="id" loading={loading} pagination={false} />
       </Card>
 
-      <Modal title={editRecord ? `配置渠道: ${editRecord.channel_name}` : '添加渠道'} open={modalVisible}
+      <Modal title={editRecord ? `配置渠道: ${editRecord.channel_name}` : '添加发卡渠道'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={() => form.submit()} width={560}>
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item name="channelCode" label="渠道代码" rules={[{ required: true }]}>
-            <Input placeholder="如: AIRWALLEX" disabled={!!editRecord} />
+            <Input placeholder="如: DOGPAY" disabled={!!editRecord} />
           </Form.Item>
           <Form.Item name="channelName" label="渠道名称" rules={[{ required: true }]}>
-            <Input placeholder="如: 空中云汇" />
+            <Input placeholder="如: DogPay 虚拟卡" />
           </Form.Item>
           <Form.Item name="apiBaseUrl" label="API 基础地址">
             <Input placeholder="https://api.example.com" />

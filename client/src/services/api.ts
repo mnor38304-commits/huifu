@@ -22,7 +22,13 @@ api.interceptors.response.use(r => r.data, err => {
   if (err.response?.status === 401) {
     // 明确告知浏览器清除 token cookie（后端 logout 已清，此处双保险）
     document.cookie = 'vcc_token=; Max-Age=0; path=/';
-    window.location.href = '/login'
+    // 避免在 /login /register /forgot-password 页面重复跳转导致死循环
+    const publicPaths = ['/login', '/register', '/forgot-password']
+    if (!publicPaths.some(p => window.location.pathname.startsWith(p))) {
+      window.location.href = '/login'
+    }
+    // 返回永不 resolve 的 Promise，让调用方静默等待
+    return new Promise(() => {})
   }
   return Promise.reject(err)
 })
@@ -41,6 +47,8 @@ export const logout = () => {
   })
 }
 export const getUserInfo = () => api.get('/auth/me')
+export const resetPassword = (account: string, code: string, newPassword: string) =>
+  api.post('/auth/reset-password', { account, code, newPassword })
 
 // ── Cards ────────────────────────────────────────────────────────────────────
 export const getCards = (status?: number) => api.get('/cards', { params: { status } })
@@ -76,6 +84,9 @@ export const getNotices = (page = 1, pageSize = 10) => api.get('/notices', { par
 export const getKycStatus = () => api.get('/kyc/status')
 export const submitKyc = (data: any) => api.post('/kyc/submit', data)
 
+// ── Upload ───────────────────────────────────────────────────────────────────
+export const uploadImage = (base64: string) => api.post('/upload/image', { base64 })
+
 // ── Wallet ───────────────────────────────────────────────────────────────────
 export const getWalletInfo = () => api.get('/wallet/info')
 export const getWalletStats = () => api.get('/wallet/stats')
@@ -84,5 +95,6 @@ export const getDepositList = (params: any) => api.get('/wallet/deposits', { par
 export const getDepositDetail = (id: number) => api.get(`/wallet/deposits/${id}`)
 export const createC2COrder = (data: any) => api.post('/wallet/deposit/c2c', data)
 export const getWalletRecords = (params: any) => api.get('/wallet/records', { params })
+export const checkDepositStatus = (orderNo: string) => api.get(`/wallet/deposits/${orderNo}/status`)
 
 export default api

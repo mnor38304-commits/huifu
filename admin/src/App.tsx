@@ -15,6 +15,7 @@ import CardBins from './pages/CardBins'
 import CardList from './pages/CardList'
 import Channels from './pages/Channels'
 import UsdtOrders from './pages/UsdtOrders'
+import UsdtChannel from './pages/UsdtChannel'
 import Transactions from './pages/Transactions'
 import Notices from './pages/Notices'
 import AdminLogs from './pages/AdminLogs'
@@ -41,7 +42,13 @@ const menuItems = [
       { key: '/channels', label: '渠道对接', icon: <ApiOutlined /> },
     ]
   },
-  { key: '/usdt', icon: <DollarOutlined />, label: 'USDT充值' },
+  {
+    key: 'usdt', icon: <DollarOutlined />, label: 'USDT充值',
+    children: [
+      { key: '/usdt', label: '充值订单' },
+      { key: '/usdt-channel', label: '收款渠道设置', icon: <SettingOutlined /> },
+    ]
+  },
   { key: '/transactions', icon: <SwapOutlined />, label: '交易流水' },
   { key: '/notices', icon: <BellOutlined />, label: '公告管理' },
   { key: '/logs', icon: <FileTextOutlined />, label: '操作日志' },
@@ -49,6 +56,7 @@ const menuItems = [
 
 export default function App() {
   const [admin, setAdmin] = useState<any>(null)
+  const [authChecking, setAuthChecking] = useState(true)
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
@@ -58,15 +66,38 @@ export default function App() {
     const t = localStorage.getItem('admin_token')
     if (t) {
       getAdminInfo().then((r: any) => {
-        if (r.code === 0) setAdmin(r.data)
-        else { localStorage.removeItem('admin_token'); navigate('/login') }
-      }).catch(() => navigate('/login'))
+        if (r.code === 0) {
+          setAdmin(r.data)
+        } else {
+          localStorage.removeItem('admin_token')
+          navigate('/login')
+        }
+      }).catch(() => {
+        localStorage.removeItem('admin_token')
+        navigate('/login')
+      }).finally(() => {
+        setAuthChecking(false)
+      })
+    } else {
+      setAuthChecking(false)
     }
   }, [])
 
   const logout = () => { localStorage.removeItem('admin_token'); navigate('/login') }
 
-  if (!admin && !localStorage.getItem('admin_token')) {
+  // 正在验证 token，显示全屏 loading，避免未授权内容闪现
+  if (authChecking) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 36, marginBottom: 16 }}>💳</div>
+          <div style={{ color: '#666' }}>正在验证身份...</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!admin) {
     return <Routes>
       <Route path="/login" element={<Login onLogin={setAdmin} />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
@@ -91,7 +122,7 @@ export default function App() {
           }
         </div>
         <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]}
-          defaultOpenKeys={['merchant', 'card']}
+          defaultOpenKeys={['merchant', 'card', 'usdt']}
           onClick={({ key }) => navigate(key)} items={menuItems} />
       </Sider>
 
@@ -126,6 +157,7 @@ export default function App() {
             <Route path="/cards" element={<CardList />} />
             <Route path="/channels" element={<Channels />} />
             <Route path="/usdt" element={<UsdtOrders />} />
+            <Route path="/usdt-channel" element={<UsdtChannel />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/wallet" element={<WalletManagement />} />
             <Route path="/notices" element={<Notices />} />

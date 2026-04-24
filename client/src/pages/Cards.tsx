@@ -238,7 +238,7 @@ const Cards: React.FC = () => {
             <Select loading={binsLoading} placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} allowClear>
               {availableBins.map((bin) => (
                 <Option key={bin.id} value={bin.id}>
-                  {bin.bin_code} - {bin.bin_name} {bin.card_brand ? `(${bin.card_brand})` : ''}
+                  {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''}
                 </Option>
               ))}
             </Select>
