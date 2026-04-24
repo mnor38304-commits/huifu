@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import db from '../db';
+import db, { getDb, saveDatabase } from '../db';
 
 const router = Router();
 
@@ -88,7 +88,7 @@ router.post('/notify', async (req, res) => {
       console.log(`[CoinPal IPN] 状态[${status}]，订单[${orderNo}]暂不处理`);
     }
 
-    // 6. 更新订单
+    // 6. 更新订单（仅 status=0 → newStatus 的原子更新，防重复入账）
     const now = new Date().toISOString();
     if (newStatus !== 0) {
       const existingPaidAddress = order.paid_address ? order.paid_address : null;
@@ -96,16 +96,17 @@ router.post('/notify', async (req, res) => {
       const existingConfirmedAt = order.confirmed_at ? order.confirmed_at : null;
       const existingChannelOrderNo = order.channel_order_no ? order.channel_order_no : null;
 
-      db.prepare(`
-        UPDATE usdt_orders SET
+      // 用底层 database 直接执行 UPDATE，获取 changes 判断是否真的从 0 更新
+      const database = getDb();
+      database.run(
+        `UPDATE usdt_orders SET
           status = ?,
           paid_address = COALESCE(?, ?),
           paid_amount = COALESCE(?, ?),
           confirmed_at = COALESCE(?, ?),
           channel_order_no = COALESCE(?, ?),
           updated_at = ?
-        WHERE order_no = ?
-      `).run(
+        WHERE order_no = ? AND status = 0`,
         newStatus,
         paidAddress ? paidAddress : null,
         existingPaidAddress,
@@ -118,25 +119,40 @@ router.post('/notify', async (req, res) => {
         now,
         orderNo
       );
-      console.log(`[CoinPal IPN] 订单[${orderNo}] 更新为状态[${newStatus}] (${status})`);
-    }
 
-    // 7. 充值成功 → 给用户钱包加款
-    if (isSuccess && order.user_id) {
-      const userId = order.user_id;
-      const creditAmount = paidAmount ? parseFloat(paidAmount) : parseFloat(order.amount_usdt);
-      try {
-        const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
-        if (wallet) {
-          db.prepare('UPDATE wallets SET balance_usdt = balance_usdt + ? WHERE user_id = ?')
-            .run(creditAmount, userId);
-        } else {
-          db.prepare('INSERT INTO wallets (user_id, balance_usdt, balance_usd, locked_usd) VALUES (?, ?, 0, 0)')
-            .run(userId, creditAmount);
+      // sql.js: 获取 affected rows
+      const didUpdate = database.getRowsModified() > 0;
+      saveDatabase();
+      console.log(`[CoinPal IPN] 订单[${orderNo}] 状态更新: ${didUpdate ? '成功' : '跳过(已是终态)'} →[${newStatus}] (${status})`);
+
+      // 7. 充值成功且确实是从 0→1 更新 → 才给用户钱包加款
+      if (isSuccess && didUpdate && order.user_id) {
+        const userId = order.user_id;
+        const creditAmount = paidAmount ? parseFloat(paidAmount) : parseFloat(order.amount_usdt);
+        if (creditAmount > 0 && Number.isFinite(creditAmount)) {
+          try {
+            const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
+            const balanceBefore = wallet ? wallet.balance_usdt : 0;
+            if (wallet) {
+              db.prepare('UPDATE wallets SET balance_usdt = balance_usdt + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?')
+                .run(creditAmount, userId);
+            } else {
+              db.prepare('INSERT INTO wallets (user_id, balance_usdt, balance_usd, locked_usd) VALUES (?, ?, 0, 0)')
+                .run(userId, creditAmount);
+            }
+            const balanceAfter = (wallet ? wallet.balance_usdt : 0) + creditAmount;
+
+            // 写入钱包流水
+            db.prepare(`
+              INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type)
+              VALUES (?, 'TOPUP', ?, ?, ?, 'USDT', ?, 'usdt_order')
+            `).run(userId, creditAmount, balanceBefore, balanceAfter, `CoinPal 充值到账 订单${orderNo}`);
+
+            console.log(`[CoinPal IPN] 用户[${userId}] 钱包到账 ${creditAmount} USDT (${balanceBefore} → ${balanceAfter})`);
+          } catch (e: any) {
+            console.error('[CoinPal IPN] 钱包加款失败:', e.message);
+          }
         }
-        console.log(`[CoinPal IPN] 用户[${userId}] 钱包到账 ${creditAmount} USDT`);
-      } catch (e: any) {
-        console.error('[CoinPal IPN] 钱包加款失败:', e.message);
       }
     }
 

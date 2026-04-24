@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import db, { getDb } from '../db';
+import db, { getDb, saveDatabase } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { CoinPalSDK } from '../channels/coinpal';
 
@@ -389,25 +389,46 @@ router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, 
           apiBaseUrl: channel.api_base_url || undefined,
         });
         const cpResult = await sdk.queryOrder(order.coinpal_reference);
-        // 同步到数据库
+        // 同步到数据库：仅 status=0 时原子更新为 1，防止重复入账
         if (cpResult.status === 'paid' || cpResult.status === 'paid_confirming') {
-          db.prepare(`
-            UPDATE usdt_orders SET status=1, paid_address=?, paid_amount=?,
-            confirmed_at=COALESCE(confirmed_at, datetime('now'))
-            WHERE order_no=? AND status=0
-          `).run(cpResult.paidAddress || '', cpResult.paidAmount || order.amount_usdt, orderNo);
+          // 用底层 database 执行原子更新并检测 affected rows
+          const database = getDb();
+          database.run(
+            `UPDATE usdt_orders SET status=1, paid_address=?, paid_amount=?,
+            confirmed_at=COALESCE(confirmed_at, datetime('now')),
+            updated_at=datetime('now')
+            WHERE order_no=? AND status=0`,
+            cpResult.paidAddress || '', cpResult.paidAmount || order.amount_usdt, orderNo
+          );
+          const didUpdate = database.getRowsModified() > 0;
+          saveDatabase();
 
-          // 给钱包加款（如果还没加过）
-          const creditAmount = parseFloat(cpResult.paidAmount || order.amount_usdt);
-          const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as { total: number };
-          if (wallet) {
-            db.prepare('UPDATE wallets SET balance_usdt = balance_usdt + ? WHERE user_id = ?')
-              .run(creditAmount, userId);
+          // 只有确实从 0→1 才给钱包加款
+          if (didUpdate) {
+            const creditAmount = parseFloat(cpResult.paidAmount || order.amount_usdt);
+            if (creditAmount > 0 && Number.isFinite(creditAmount)) {
+              const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as { total: number } as any;
+              const balanceBefore = wallet ? wallet.balance_usdt : 0;
+              if (wallet) {
+                db.prepare('UPDATE wallets SET balance_usdt = balance_usdt + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?')
+                  .run(creditAmount, userId);
+              } else {
+                db.prepare('INSERT INTO wallets (user_id, balance_usdt, balance_usd) VALUES (?, ?, 0)')
+                  .run(userId, creditAmount);
+              }
+              const balanceAfter = (wallet ? wallet.balance_usdt : 0) + creditAmount;
+
+              // 写入钱包流水
+              db.prepare(`
+                INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type)
+                VALUES (?, 'TOPUP', ?, ?, ?, 'USDT', ?, 'usdt_order')
+              `).run(userId, creditAmount, balanceBefore, balanceAfter, `CoinPal 主动查询到账 订单${orderNo}`);
+
+              console.log(`[Wallet] CoinPal 主动查询到账: orderNo=${orderNo}, amount=${creditAmount} (${balanceBefore} → ${balanceAfter})`);
+            }
           } else {
-            db.prepare('INSERT INTO wallets (user_id, balance_usdt, balance_usd) VALUES (?, ?, 0)')
-              .run(userId, creditAmount);
+            console.log(`[Wallet] CoinPal 主动查询: 订单${orderNo} 已是终态，跳过加款`);
           }
-          console.log(`[Wallet] CoinPal 主动查询到账: orderNo=${orderNo}, amount=${creditAmount}`);
         }
       }
     } catch (err: any) {
