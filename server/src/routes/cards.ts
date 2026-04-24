@@ -1,5 +1,5 @@
 ﻿import { Router, Response } from 'express';
-import db from '../db';
+import db, { getDb, saveDatabase } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ApiResponse, Card } from '../types';
 import { sendEmail, cardOpenedTemplate, topupSuccessTemplate } from '../mail';
@@ -464,14 +464,18 @@ router.get('/:id/reveal', authMiddleware, async (req: AuthRequest, res: Response
 
 router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const { amount } = req.body;
+  const userId = req.user!.userId;
 
-  if (!amount || amount <= 0) {
+  // 1. 校验充值金额
+  const numAmount = Number(amount);
+  if (!numAmount || numAmount <= 0 || !Number.isFinite(numAmount)) {
     return res.json({ code: 400, message: '请输入有效金额', timestamp: Date.now() });
   }
 
+  // 2. 校验卡片
   const card = db.prepare(
     'SELECT c.*, u.email FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?'
-  ).get(req.params.id, req.user!.userId) as (Card & { email?: string }) | undefined;
+  ).get(req.params.id, userId) as (Card & { email?: string }) | undefined;
 
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
@@ -481,24 +485,75 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
     return res.json({ code: 400, message: '卡片状态异常', timestamp: Date.now() });
   }
 
-  const newBalance = card.balance + amount;
-  db.prepare('UPDATE cards SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newBalance, card.id);
-
-  const txnNo = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
-  db.prepare(`
-    INSERT INTO transactions (txn_no, card_id, user_id, txn_type, amount, currency, status, merchant_name, txn_time)
-    VALUES (?, ?, ?, 'TOPUP', ?, 'USD', 1, '账户充值', CURRENT_TIMESTAMP)
-  `).run(txnNo, card.id, req.user!.userId, amount);
-
-  if (card.email) {
-    sendEmail({
-      to: card.email,
-      subject: '💰 充值成功 - VCC虚拟卡系统',
-      html: topupSuccessTemplate(card.card_no_masked, amount, newBalance)
-    });
+  // 3. 校验钱包余额
+  const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
+  if (!wallet) {
+    return res.json({ code: 400, message: '钱包不存在，请先创建钱包', timestamp: Date.now() });
   }
 
-  res.json({ code: 0, message: '充值成功', data: { newBalance }, timestamp: Date.now() });
+  if (wallet.balance_usd < numAmount) {
+    return res.json({ code: 400, message: `钱包余额不足，当前余额: $${wallet.balance_usd}`, timestamp: Date.now() });
+  }
+
+  // 4. 使用事务执行：扣减钱包 → 增加卡余额 → 写流水
+  const database = getDb();
+  try {
+    database.run('BEGIN');
+
+    const walletBalanceBefore = wallet.balance_usd;
+    const walletBalanceAfter = walletBalanceBefore - numAmount;
+    const cardBalanceBefore = card.balance;
+    const cardBalanceAfter = cardBalanceBefore + numAmount;
+
+    // 扣减钱包余额
+    database.run('UPDATE wallets SET balance_usd = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+      walletBalanceAfter, userId);
+
+    // 增加卡片余额
+    database.run('UPDATE cards SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      cardBalanceAfter, card.id);
+
+    // 写入交易流水
+    const txnNo = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    database.run(`
+      INSERT INTO transactions (txn_no, card_id, user_id, txn_type, amount, currency, status, merchant_name, txn_time)
+      VALUES (?, ?, ?, 'TOPUP', ?, 'USD', 1, '账户充值', CURRENT_TIMESTAMP)
+    `, txnNo, card.id, userId, numAmount);
+
+    // 写入钱包流水（含 balance_before 和 balance_after）
+    database.run(`
+      INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type, reference_id)
+      VALUES (?, 'CARD_TOPUP', ?, ?, ?, 'USD', ?, 'card_topup', ?)
+    `, userId, -numAmount, walletBalanceBefore, walletBalanceAfter,
+      `充值到卡片 ${card.card_no_masked}`, card.id);
+
+    database.run('COMMIT');
+    saveDatabase();
+
+    // 5. 发送邮件通知
+    if (card.email) {
+      sendEmail({
+        to: card.email,
+        subject: '💰 充值成功 - VCC虚拟卡系统',
+        html: topupSuccessTemplate(card.card_no_masked, numAmount, cardBalanceAfter)
+      });
+    }
+
+    res.json({
+      code: 0,
+      message: '充值成功',
+      data: {
+        newBalance: cardBalanceAfter,
+        walletBalance: walletBalanceAfter,
+      },
+      timestamp: Date.now(),
+    });
+  } catch (err: any) {
+    database.run('ROLLBACK');
+    saveDatabase();
+    console.error('[Card Topup] 事务失败:', err.message);
+    return res.json({ code: 500, message: '充值失败，请稍后重试', timestamp: Date.now() });
+  }
 });
 
 // ── 冻结卡片 ────────────────────────────────────────────────────────────────
