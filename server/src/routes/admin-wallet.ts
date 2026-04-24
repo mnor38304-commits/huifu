@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db';
-import { adminAuth } from './admin-auth';
+import { adminAuth, AdminRequest } from './admin-auth';
 
 const router = Router();
 
@@ -63,9 +63,9 @@ router.get('/:userId', adminAuth, (req, res) => {
 });
 
 // ── 调增/调减余额 ─────────────────────────────────────────────
-router.post('/adjust', adminAuth, (req, res) => {
+router.post('/adjust', adminAuth, (req: AdminRequest, res) => {
   const { userId, amount, type, reason = '' } = req.body;
-  const adminId = (req as any).adminId;
+  const adminId = req.admin!.id;
   
   if (!userId || !amount || !type) {
     return res.json({ code: 400, message: '参数不完整' });
@@ -117,12 +117,13 @@ router.post('/adjust', adminAuth, (req, res) => {
   
   // 同时记录流水
   db.prepare(`
-    INSERT INTO wallet_records (user_id, type, amount, balance_after, remark)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, remark)
+    VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     type === 'increase' ? 'ADMIN_IN' : 'ADMIN_OUT',
     numAmount,
+    currentBalance,
     newBalance,
     reason || (type === 'increase' ? '管理员调增' : '管理员调减')
   );
