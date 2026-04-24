@@ -107,7 +107,7 @@ router.post('/notify', async (req, res) => {
           channel_order_no = COALESCE(?, ?),
           updated_at = ?
         WHERE order_no = ? AND status = 0`,
-        newStatus,
+        [newStatus,
         paidAddress ? paidAddress : null,
         existingPaidAddress,
         paidAmount ? paidAmount : null,
@@ -117,7 +117,7 @@ router.post('/notify', async (req, res) => {
         reference ? reference : null,
         existingChannelOrderNo,
         now,
-        orderNo
+        orderNo]
       );
 
       // sql.js: 获取 affected rows

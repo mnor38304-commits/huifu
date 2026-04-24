@@ -398,7 +398,7 @@ router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, 
             confirmed_at=COALESCE(confirmed_at, datetime('now')),
             updated_at=datetime('now')
             WHERE order_no=? AND status=0`,
-            cpResult.paidAddress || '', cpResult.paidAmount || order.amount_usdt, orderNo
+            [cpResult.paidAddress || '', cpResult.paidAmount || order.amount_usdt, orderNo]
           );
           const didUpdate = database.getRowsModified() > 0;
           saveDatabase();

@@ -507,25 +507,25 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
 
     // 扣减钱包余额
     database.run('UPDATE wallets SET balance_usd = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
-      walletBalanceAfter, userId);
+      [walletBalanceAfter, userId]);
 
     // 增加卡片余额
     database.run('UPDATE cards SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      cardBalanceAfter, card.id);
+      [cardBalanceAfter, card.id]);
 
     // 写入交易流水
     const txnNo = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
     database.run(`
       INSERT INTO transactions (txn_no, card_id, user_id, txn_type, amount, currency, status, merchant_name, txn_time)
       VALUES (?, ?, ?, 'TOPUP', ?, 'USD', 1, '账户充值', CURRENT_TIMESTAMP)
-    `, txnNo, card.id, userId, numAmount);
+    `, [txnNo, card.id, userId, numAmount]);
 
     // 写入钱包流水（含 balance_before 和 balance_after）
     database.run(`
       INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type, reference_id)
       VALUES (?, 'CARD_TOPUP', ?, ?, ?, 'USD', ?, 'card_topup', ?)
-    `, userId, -numAmount, walletBalanceBefore, walletBalanceAfter,
-      `充值到卡片 ${card.card_no_masked}`, card.id);
+    `, [userId, -numAmount, walletBalanceBefore, walletBalanceAfter,
+      `充值到卡片 ${card.card_no_masked}`, card.id]);
 
     database.run('COMMIT');
     saveDatabase();
