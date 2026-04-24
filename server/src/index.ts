@@ -25,6 +25,9 @@ import adminUsdtRoutes from './routes/admin-usdt';
 import adminOpsRoutes from './routes/admin-ops';
 import adminWalletRoutes from './routes/admin-wallet';
 
+// Webhook 路由（CoinPal IPN 回调）
+import coinpalWebhookRoutes from './routes/coinpal-webhook';
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -80,6 +83,9 @@ app.use('/api/admin/cards', adminCardsRoutes);
 app.use('/api/admin/usdt', adminUsdtRoutes);
 app.use('/api/admin/ops', adminOpsRoutes);
 app.use('/api/admin/wallet', adminWalletRoutes);
+
+// ── Webhook 回调（CoinPal IPN，无认证）────────────────────────────
+app.use('/api/v1/webhook/coinpal', coinpalWebhookRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
 

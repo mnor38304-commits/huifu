@@ -100,8 +100,8 @@ async function getWalletChannelSDK() {
 }
 
 // ── 钱包信息 ────────────────────────────────────────────────────────────────
-router.get('/info', authMiddleware, (req, res) => {
-  const userId = (req as any).userId;
+router.get('/info', authMiddleware, (req: AuthRequest, res) => {
+  const userId = req.user!.userId;
   let wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as { total: number };
   if (!wallet) {
     const result = db.prepare(`
@@ -121,8 +121,8 @@ router.get('/info', authMiddleware, (req, res) => {
 });
 
 // ── 钱包统计数据 ──────────────────────────────────────────────────────────
-router.get('/stats', authMiddleware, (req, res) => {
-  const userId = (req as any).userId;
+router.get('/stats', authMiddleware, (req: AuthRequest, res) => {
+  const userId = req.user!.userId;
   const rows = db.prepare(`
     SELECT
       SUM(CASE WHEN status = 1 THEN amount_usdt ELSE 0 END) as total_deposited,
@@ -340,8 +340,8 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ── 充值记录列表 ──────────────────────────────────────────────────────────
-router.get('/deposits', authMiddleware, (req, res) => {
-  const userId = (req as any).userId;
+router.get('/deposits', authMiddleware, (req: AuthRequest, res) => {
+  const userId = req.user!.userId;
   const page = Number(req.query.page) || 1;
   const pageSize = Number(req.query.pageSize) || 10;
   const offset = (page - 1) * pageSize;
@@ -364,8 +364,8 @@ router.get('/deposits', authMiddleware, (req, res) => {
 });
 
 // ── 查询充值订单状态（主动查询 CoinPal）─────────────────────────────
-router.get('/deposit/:orderNo/status', authMiddleware, async (req, res) => {
-  const userId = (req as any).userId;
+router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, res) => {
+  const userId = req.user!.userId;
   const { orderNo } = req.params;
 
   const order = db.prepare('SELECT * FROM usdt_orders WHERE order_no = ? AND user_id = ?')

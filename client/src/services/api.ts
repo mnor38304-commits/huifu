@@ -95,6 +95,6 @@ export const getDepositList = (params: any) => api.get('/wallet/deposits', { par
 export const getDepositDetail = (id: number) => api.get(`/wallet/deposits/${id}`)
 export const createC2COrder = (data: any) => api.post('/wallet/deposit/c2c', data)
 export const getWalletRecords = (params: any) => api.get('/wallet/records', { params })
-export const checkDepositStatus = (orderNo: string) => api.get(`/wallet/deposits/${orderNo}/status`)
+export const checkDepositStatus = (orderNo: string) => api.get(`/wallet/deposit/${orderNo}/status`)
 
 export default api
