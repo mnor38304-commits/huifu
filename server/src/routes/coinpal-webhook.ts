@@ -32,7 +32,9 @@ function verifyCoinPalSign(
 // ── IPN 回调入口 ──────────────────────────────────────────────
 router.post('/notify', async (req, res) => {
   const body = req.body as Record<string, string>;
-  console.log('[CoinPal IPN] 收到回调:', JSON.stringify(body));
+  // 脱敏日志：不输出 sign/secretKey 明文
+  const safeBody = { ...body, sign: body.sign ? body.sign.substring(0, 8) + '...' : 'N/A' };
+  console.log('[CoinPal IPN] 收到回调:', JSON.stringify(safeBody));
 
   try {
     // 1. 提取必要字段
@@ -59,7 +61,10 @@ router.post('/notify', async (req, res) => {
     const secretKey = channel.api_secret ? channel.api_secret : '';
 
     // 3. 验签
-    if (!verifyCoinPalSign(secretKey, body)) {
+    const signOk = verifyCoinPalSign(secretKey, body);
+    console.log(`[CoinPal IPN] 验签结果: orderNo=${orderNo}, reference=${reference || 'N/A'}, status=${status}, paidAmount=${paidAmount || 'N/A'}, signOk=${signOk}`);
+
+    if (!signOk) {
       console.warn('[CoinPal IPN] 签名验证失败, orderNo:', orderNo);
       return res.status(403).send('Invalid signature');
     }

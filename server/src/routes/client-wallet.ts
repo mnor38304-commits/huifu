@@ -185,6 +185,7 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
         });
 
         // 保存订单到数据库
+        const coinpalRef = result.reference || '';  // CoinPal 平台订单号 (CWSxxx)
         const dbResult = db.prepare(`
           INSERT INTO usdt_orders (
             order_no, user_id, amount_usdt, amount_usd, exchange_rate,
@@ -198,11 +199,17 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
           amountUsdt,
           network,
           result.paymentUrl, // CoinPal 用 paymentUrl 作为 pay_address（展示给用户跳转）
-          result.reference,   // CoinPal 平台订单号
-          orderNo,            // 商户订单号（与 CoinPal 的 orderNo 对应）
+          orderNo,           // coinpal_order_no: 我们系统的商户订单号 (DPxxx)
+          coinpalRef,        // coinpal_reference: CoinPal 平台订单号 (CWSxxx)，用于 queryOrder gcid
         );
 
-        console.log(`[Wallet/CoinPal] 订单创建成功: orderNo=${orderNo}, reference=${result.reference}, paymentUrl=${result.paymentUrl}`);
+        // 安全日志：记录关键字段，不输出密钥，paymentUrl 截断
+        const paymentUrlPreview = result.paymentUrl ? result.paymentUrl.substring(0, 60) + '...' : 'N/A';
+        const notifyDomain = new URL(API_BASE).hostname;
+        console.log(`[Wallet/CoinPal] 订单创建成功: orderNo=${orderNo}, coinpalRef=${coinpalRef || 'EMPTY'}, notifyDomain=${notifyDomain}, paymentUrl=${paymentUrlPreview}`);
+        if (!coinpalRef) {
+          console.warn(`[Wallet/CoinPal] ⚠️ CoinPal 返回 reference 为空，主动查询将无法使用 gcid`);
+        }
 
         return res.json({
           code: 0,
@@ -388,8 +395,10 @@ router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, 
           secretKey: config.secretKey || channel.api_secret || '',
           apiBaseUrl: channel.api_base_url || undefined,
         });
-        const cpResult = await sdk.queryOrder(order.coinpal_reference);
-        console.log(`[Wallet] CoinPal 主动查询: orderNo=${orderNo}, status=${cpResult.status}`);
+        const gcid = order.coinpal_reference;
+        console.log(`[Wallet] CoinPal 主动查询: orderNo=${orderNo}, gcid=${gcid}`);
+        const cpResult = await sdk.queryOrder(gcid);
+        console.log(`[Wallet] CoinPal 主动查询结果: orderNo=${orderNo}, status=${cpResult.status}, paidAmount=${cpResult.paidAmount || 'N/A'}`);
 
         // 同步到数据库：仅 status=0 时原子更新，防止重复入账
         if (cpResult.status === 'paid') {
