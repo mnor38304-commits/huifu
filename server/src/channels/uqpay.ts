@@ -43,13 +43,35 @@ export interface UqPayCardholder {
   updated_at: string;
 }
 
+/**
+ * UQPay Card Product — 标准化接口
+ *
+ * UQPay API 实际返回字段可能与接口不同（如 product_id vs id、数组 vs 字符串），
+ * listCardProducts() 内部负责将原始响应标准化为此接口。
+ */
 export interface UqPayCardProduct {
-  id: string;
-  name: string;
-  currency: string;
-  card_network: string;
-  card_type: string;
-  status: string;
+  /** 产品唯一 ID（UQPay 实际返回 product_id，兼容 id） */
+  product_id: string;
+  /** 产品名称（可选，部分渠道不返回） */
+  name?: string;
+  /** 卡 BIN 码（如 40963608） */
+  card_bin: string;
+  /** 支持币种数组（如 ["USD"]） */
+  card_currency: string[];
+  /** 卡形式数组（如 ["VIR","PHY"]） */
+  card_form: string[];
+  /** 卡组织（如 VISA / MC） */
+  card_scheme: string;
+  /** 模式：SHARE（共享额度）或 SINGLE（独立额度） */
+  mode_type: 'SHARE' | 'SINGLE';
+  /** 产品状态：ENABLED / ACTIVE / DISABLED 等 */
+  product_status: string;
+  /** KYC 等级（如 SIMPLIFIED） */
+  kyc_level?: string;
+  /** 最大发卡配额 */
+  max_card_quota?: number;
+  /** 创建时必填字段列表 */
+  required_fields?: Array<{ name: string; type: string; required: boolean }>;
 }
 
 export interface UqPayCard {
@@ -77,6 +99,48 @@ export interface UqPayTransfer {
   status: 'pending' | 'completed' | 'failed';
   reason: string;
   created_at: string;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * 将 UQPay Card Product 原始响应标准化为 UqPayCardProduct 接口
+ *
+ * 兼容字段映射：
+ * - product_id / id → product_id
+ * - card_currency (数组或字符串) → card_currency (数组)
+ * - card_form (数组或字符串) → card_form (数组)
+ * - card_scheme / card_network → card_scheme
+ * - product_status / status → product_status
+ */
+function normalizeCardProduct(raw: any): UqPayCardProduct {
+  // card_currency: 兼容数组或字符串
+  const card_currency = Array.isArray(raw.card_currency)
+    ? raw.card_currency.map(String)
+    : raw.currency
+      ? [String(raw.currency)]
+      : ['USD'];
+
+  // card_form: 兼容数组或字符串
+  const card_form = Array.isArray(raw.card_form)
+    ? raw.card_form.map(String)
+    : raw.card_type
+      ? [String(raw.card_type)]
+      : ['VIR'];
+
+  return {
+    product_id: String(raw.product_id || raw.id || ''),
+    name: raw.name || undefined,
+    card_bin: String(raw.card_bin || ''),
+    card_currency,
+    card_form,
+    card_scheme: String(raw.card_scheme || raw.card_network || 'VISA'),
+    mode_type: (String(raw.mode_type || 'SHARE').toUpperCase() === 'SINGLE' ? 'SINGLE' : 'SHARE') as 'SHARE' | 'SINGLE',
+    product_status: String(raw.product_status || raw.status || 'UNKNOWN'),
+    kyc_level: raw.kyc_level || undefined,
+    max_card_quota: raw.max_card_quota != null ? Number(raw.max_card_quota) : undefined,
+    required_fields: Array.isArray(raw.required_fields) ? raw.required_fields : undefined,
+  };
 }
 
 // ─── SDK ───────────────────────────────────────────────────────────────────────
@@ -427,29 +491,75 @@ export class UqPaySDK {
   // ── 卡产品 (Card Products) ───────────────────────────────────────────────
 
   /**
-   * 列出可用卡产品
+   * 列出可用卡产品（自动标准化字段）
+   *
+   * UQPay API 返回的字段名与标准化接口存在差异，此方法负责映射：
+   * - product_id / id → product_id
+   * - card_currency (数组或字符串) → card_currency (数组)
+   * - card_form (数组或字符串) → card_form (数组)
+   * - card_scheme / card_network → card_scheme
+   * - product_status / status → product_status
    */
   async listCardProducts(): Promise<UqPayCardProduct[]> {
-    const res = await this.request<{ data: UqPayCardProduct[] }>(
+    const res = await this.request<{ data: any[] }>(
       'GET',
       '/api/v1/issuing/products?page_size=100&page_number=1'
     );
-    return res.data || [];
+    const raw = res.data || [];
+    return raw.map(normalizeCardProduct);
   }
 
   /**
-   * 根据币种获取第一个可用卡产品ID（缓存）
+   * 根据币种获取 SINGLE 模式卡产品
+   *
+   * 业务约束：只开 SINGLE 卡（独立额度），不开 SHARE 卡（共享额度）。
+   *
+   * 过滤条件：
+   * - card_form 包含 VIR（虚拟卡）
+   * - card_currency 包含指定币种
+   * - product_status 为 ENABLED 或 ACTIVE
+   * - mode_type 严格为 SINGLE
+   *
+   * @returns 标准化后的 SINGLE 卡产品，可直接用于 createCard 的 card_product_id
+   * @throws 如果没有符合条件的 SINGLE 产品，抛出明确错误
    */
-  async getCardProductId(currency: string = 'USD'): Promise<string> {
+  async getCardProductId(currency: string = 'USD'): Promise<UqPayCardProduct> {
     const products = await this.listCardProducts();
-    const product = products.find(
-      p => p.currency.toUpperCase() === currency.toUpperCase() && p.status === 'ACTIVE'
-    );
-    if (!product) {
-      throw new Error(`[UqPay] 未找到 ${currency} 可用卡产品，请确认 UQPay 账户已开通该币种发卡权限`);
+
+    const eligibleStatuses = ['ENABLED', 'ACTIVE'];
+    const singleOnly = products.filter(p => {
+      const hasVir = p.card_form.some(f => f.toUpperCase() === 'VIR');
+      const hasCur = p.card_currency.some(c => c.toUpperCase() === currency.toUpperCase());
+      const isActive = eligibleStatuses.some(s => p.product_status.toUpperCase().includes(s));
+      const isSingle = p.mode_type === 'SINGLE';
+      return hasVir && hasCur && isActive && isSingle;
+    });
+
+    if (singleOnly.length === 0) {
+      // 收集 SHARE 产品信息用于错误提示（帮助排查）
+      const shareProducts = products.filter(p => {
+        const hasVir = p.card_form.some(f => f.toUpperCase() === 'VIR');
+        const hasCur = p.card_currency.some(c => c.toUpperCase() === currency.toUpperCase());
+        const isActive = eligibleStatuses.some(s => p.product_status.toUpperCase().includes(s));
+        return hasVir && hasCur && isActive && p.mode_type !== 'SINGLE';
+      });
+      throw new Error(
+        `[UqPay] 未找到可用的 UQPay SINGLE 虚拟卡产品（${currency}）。` +
+        `可用虚拟卡产品共 ${singleOnly.length + shareProducts.length} 个，其中 SHARE ${shareProducts.length} 个。` +
+        `请联系 UQPay 开通 SINGLE 模式卡产品。`
+      );
     }
-    console.log('[UqPay] 卡产品:', product.id, product.name);
-    return product.id;
+
+    const chosen = singleOnly[0];
+    console.log(
+      '[UqPay] 选择 SINGLE 卡产品:',
+      chosen.product_id.slice(0, 8) + '...',
+      `BIN:${chosen.card_bin}`,
+      `${chosen.card_scheme}`,
+      chosen.mode_type,
+      `status:${chosen.product_status}`
+    );
+    return chosen;
   }
 
   // ── 卡片 (Cards) ─────────────────────────────────────────────────────────
@@ -727,6 +837,78 @@ export class UqPaySDK {
     return `${iframeDomain}/iframe/card?token=${panToken}&cardId=${cardId}&lang=${lang}`;
   }
 
+  // ── BIN 同步 ────────────────────────────────────────────────────────────
+
+  /**
+   * 将 UQPay 卡产品同步到 card_bins 表
+   *
+   * 注意：此方法同步所有可用产品（含 SHARE 和 SINGLE），用于管理后台展示和 BIN 管理。
+   * 实际开卡时，getCardProductId() 会严格只选择 SINGLE 产品。
+   *
+   * 字段映射：
+   * - external_bin_id ← product_id
+   * - bin_code ← card_bin
+   * - card_brand ← card_scheme
+   * - currency ← card_currency 中的第一个
+   * - channel_code ← 'uqpay'
+   * - raw_json ← 完整原始 JSON（不含密钥）
+   */
+  async syncCardProductsToBins(database: any): Promise<{ synced: number; total: number }> {
+    const products = await this.listCardProducts();
+    if (products.length === 0) {
+      throw new Error('[UqPay] 未获取到任何卡产品，无法同步 BIN');
+    }
+
+    let synced = 0;
+
+    for (const p of products) {
+      const externalBinId = p.product_id;
+      const binCode = p.card_bin || externalBinId.slice(0, 8);
+      const binName = `UQPay ${p.card_scheme} ${p.mode_type}`;
+      const cardBrand = p.card_scheme;
+      const currency = p.card_currency[0] || 'USD';
+      const status = ['ENABLED', 'ACTIVE'].some(s => p.product_status.toUpperCase().includes(s)) ? 1 : 0;
+      const rawJson = JSON.stringify(p);
+
+      // 检查是否已存在（按 channel_code + external_bin_id）
+      const checkStmt = database.prepare('SELECT id FROM card_bins WHERE channel_code = ? AND external_bin_id = ?');
+      checkStmt.bind(['uqpay', externalBinId]);
+      const exists = checkStmt.step();
+      let existingId: number | null = null;
+      if (exists) {
+        const row = checkStmt.getAsObject();
+        existingId = row?.id || null;
+      }
+      checkStmt.free();
+
+      if (existingId) {
+        const updateStmt = database.prepare(
+          'UPDATE card_bins SET bin_code=?, bin_name=?, card_brand=?, currency=?, status=?, raw_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
+        );
+        updateStmt.run([binCode, binName, cardBrand, currency, status, rawJson, existingId]);
+        updateStmt.free();
+      } else {
+        const insertStmt = database.prepare(
+          'INSERT INTO card_bins (channel_code, external_bin_id, bin_code, bin_name, card_brand, currency, country, status, raw_json) VALUES (?,?,?,?,?,?,?,?,?)'
+        );
+        insertStmt.run(['uqpay', externalBinId, binCode, binName, cardBrand, currency, 'US', status, rawJson]);
+        insertStmt.free();
+      }
+
+      console.log(
+        '[UqPay] BIN 同步:',
+        existingId ? '更新' : '新增',
+        `bin=${binCode}`,
+        `scheme=${cardBrand}`,
+        `mode=${p.mode_type}`,
+        `status=${p.product_status}`
+      );
+      synced++;
+    }
+
+    return { synced, total: products.length };
+  }
+
   // ── 工具方法 ─────────────────────────────────────────────────────────────
 
   /**
@@ -743,7 +925,7 @@ export class UqPaySDK {
       const token = await this.refreshToken();
       const [holders, products, accounts] = await Promise.all([
         this.request<{ data: UqPayCardholder[] }>('GET', '/api/v1/issuing/cardholders?page_size=1&page_number=1'),
-        this.request<{ data: UqPayCardProduct[] }>('GET', '/api/v1/issuing/products?page_size=1&page_number=1'),
+        this.request<{ data: any[] }>('GET', '/api/v1/issuing/products?page_size=1&page_number=1'),
         this.request<{ data: any[] }>('GET', '/api/v1/accounts?page_size=1&page_number=1'),
       ]);
       return {

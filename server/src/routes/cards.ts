@@ -211,13 +211,13 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
       uqpayCardholderId = cardholder.id;
 
-      // 2. 获取卡产品 ID
-      const cardProductId = await sdk.getCardProductId('USD');
+      // 2. 获取卡产品（返回标准化 UqPayCardProduct）
+      const cardProduct = await sdk.getCardProductId('USD');
 
       // 3. 创建卡片
       const cardResult = await sdk.createCard({
         cardholderId: cardholder.id,
-        cardProductId,
+        cardProductId: cardProduct.product_id,
         cardCurrency: 'USD',
         cardLimit: Number(creditLimit),
         cardType: cardType === 'physical' ? 'physical' : 'virtual',
