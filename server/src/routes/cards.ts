@@ -156,6 +156,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   let selectedBinId: number | null = null;
   let channelCode = 'MOCK';
   let uqpayCardholderId: string | null = null;
+  let uqpayCardResult: any = null; // UQPay 开卡结果（用于后续 card_order_id 等字段）
 
   const channel = await getChannelSDK();
   let allowedBins = getMerchantOpenableBins(req.user!.userId);
@@ -227,15 +228,20 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         },
       });
 
-      externalId = cardResult.id;
-      masked = `****${cardResult.last4}`;
+      externalId = cardResult.card_id;
+      masked = cardResult.last4 ? `****${cardResult.last4}` : `****${cardResult.card_id.slice(-4)}`;
           // UQPay 真实卡号通过 Secure iFrame 展示（PCI DSS 合规），不在 API 直接返回
       // 前端通过 POST /api/v1/cards/{id}/pan-token 获取 iframeUrl
       cardNo = '';
       cvv = '[查看卡号 → Secure iFrame]';
-      expireDate = `${cardResult.expiryYear}/${cardResult.expiryMonth}`;
+      expireDate = cardResult.expiryYear && cardResult.expiryMonth
+        ? `${cardResult.expiryYear}/${cardResult.expiryMonth}`
+        : generateExpireDate();
 
       console.log('[UQPay] 开卡成功:', externalId, masked);
+
+      // 保存开卡结果供后续写入 card_order_id
+      uqpayCardResult = cardResult;
 
     } catch (err: any) {
       console.error('[UQPay] 开卡失败:', err.message);
@@ -290,11 +296,15 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
   // ── 写入数据库 ─────────────────────────────────────────────────────────
 
+  // UQPay PENDING/PROCESSING → status=0(待激活)，其他默认 1(正常)
+  const insertStatus = (channel.type === 'uqpay' && uqpayCardResult?.card_status &&
+    ['PENDING', 'PROCESSING'].includes(uqpayCardResult.card_status.toUpperCase())) ? 0 : 1;
+
   const result = db.prepare(`
     INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type,
       currency, balance, credit_limit, single_limit, daily_limit, status, expire_date,
-      cvv, purpose, external_id, channel_code, uqpay_cardholder_id)
-    VALUES (?, ?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+      cvv, purpose, external_id, channel_code, uqpay_cardholder_id, card_order_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cardNo,
     masked,
@@ -305,12 +315,14 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     creditLimit,
     singleLimit || null,
     dailyLimit || null,
+    insertStatus,
     expireDate,
     cvv,
     purpose || null,
     externalId || null,
     channelCode,
-    uqpayCardholderId
+    uqpayCardholderId,
+    uqpayCardResult?.card_order_id || null
   );
 
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
@@ -325,7 +337,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
   res.json({
     code: 0,
-    message: '开卡成功',
+    message: insertStatus === 0 ? '开卡请求已提交，等待激活' : '开卡成功',
     data: {
       id: result.lastInsertRowid,
       cardNoMasked: masked,
@@ -336,12 +348,18 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       creditLimit,
       binId: selectedBinId,
       channel: channelCode,
+      status: insertStatus,
       // UQPay 真实卡号/CVV 需通过 Secure iFrame 查看
       requiresSecureIframe: channelCode === 'UQPAY',
       // 前端调用 GET /pan-token 获取 iframe URL
       secureIframeHint: channelCode === 'UQPAY'
         ? '卡片已创建。请调用 GET /pan-token 获取 Secure iFrame URL 查看完整卡号'
         : undefined,
+      // UQPay 卡片状态信息
+      ...(channelCode === 'UQPAY' && uqpayCardResult ? {
+        externalCardStatus: uqpayCardResult.card_status,
+        externalOrderStatus: uqpayCardResult.order_status,
+      } : {}),
     },
     timestamp: Date.now()
   });

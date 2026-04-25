@@ -106,6 +106,7 @@ async function start() {
   try { db.prepare('ALTER TABLE card_channels ADD COLUMN api_secret VARCHAR(500)').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE cards ADD COLUMN channel_code VARCHAR(50)').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE cards ADD COLUMN uqpay_cardholder_id VARCHAR(100)').run(); } catch (_) {}
+  try { db.prepare('ALTER TABLE cards ADD COLUMN card_order_id VARCHAR(100)').run(); } catch (_) {}
 
   // 初始化默认管理员账号
   const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
