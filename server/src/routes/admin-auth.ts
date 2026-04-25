@@ -93,3 +93,59 @@ router.get('/me', adminAuth, (req: AdminRequest, res) => {
 
 export default router;
 
+// ── 管理员角色权限中间件 ──────────────────────────────────────
+
+/**
+ * 角色层级（从高到低）：super > admin > finance > operator
+ * requireAdminRole('super')           → 仅 super 可访问
+ * requireAdminRole('super', 'admin')  → super 和 admin 可访问
+ */
+const ROLE_HIERARCHY: Record<string, number> = {
+  super: 4,
+  admin: 3,
+  finance: 2,
+  operator: 1,
+};
+
+export function requireAdminRole(...allowedRoles: string[]) {
+  return (req: AdminRequest, res: Response, next: NextFunction) => {
+    const role = req.admin?.role || 'operator';
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({
+        code: 403,
+        message: `权限不足，需要以下角色之一: ${allowedRoles.join(', ')}`,
+        timestamp: Date.now(),
+      });
+    }
+    next();
+  };
+}
+
+// ── 管理员操作日志辅助函数 ──────────────────────────────────
+
+/**
+ * 写入 admin_logs 审计日志
+ */
+export function writeAdminLog(params: {
+  adminId: number;
+  adminName: string;
+  action: string;
+  targetType?: string;
+  targetId?: number | string;
+  detail?: string;
+  req?: Request;
+}) {
+  const { adminId, adminName, action, targetType, targetId, detail, req } = params;
+  const ip = req
+    ? ((req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '').split(',')[0].trim()
+    : '';
+  try {
+    db.prepare(
+      `INSERT INTO admin_logs (admin_id, admin_name, action, target_type, target_id, detail, ip)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(adminId, adminName, action, targetType || null, targetId ?? null, detail || null, ip || null);
+  } catch (err: any) {
+    console.error('[AdminLog] 写入失败:', err.message);
+  }
+}
+

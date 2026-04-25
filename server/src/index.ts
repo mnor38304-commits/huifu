@@ -110,15 +110,38 @@ async function start() {
   // 初始化默认管理员账号
   const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
   if (adminCount === 0) {
-    const adminPassword = await bcrypt.hash('admin123', 10);
-    db.prepare('INSERT INTO admins (username, password_hash, salt, real_name, role, status) VALUES (?, ?, ?, ?, ?, 1)').run(
-      'admin',
-      adminPassword,
-      'default_salt',
-      '系统管理员',
-      'super'
-    );
-    console.log('✅ Default admin account created (username: admin, password: admin123)');
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    if (isProduction) {
+      // 生产环境：必须通过环境变量 ADMIN_USERNAME / ADMIN_PASSWORD 初始化
+      const adminUsername = process.env.ADMIN_USERNAME;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (!adminUsername || !adminPassword) {
+        console.error('❌ FATAL: No admin account exists and ADMIN_USERNAME / ADMIN_PASSWORD are not set.');
+        console.error('   In production, you must set these environment variables to create the initial admin.');
+        console.error('   Example: ADMIN_USERNAME=superadmin ADMIN_PASSWORD=<strong_password> npm start');
+        process.exit(1);
+      }
+
+      if (adminPassword.length < 8) {
+        console.error('❌ FATAL: ADMIN_PASSWORD must be at least 8 characters in production.');
+        process.exit(1);
+      }
+
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      db.prepare('INSERT INTO admins (username, password_hash, salt, real_name, role, status) VALUES (?, ?, ?, ?, ?, 1)').run(
+        adminUsername, hashedPassword, 'env_init', '系统管理员', 'super'
+      );
+      console.log(`✅ Initial admin account created from env (username: ${adminUsername})`);
+    } else {
+      // 开发环境：允许创建默认管理员
+      const devPassword = await bcrypt.hash('admin123', 10);
+      db.prepare('INSERT INTO admins (username, password_hash, salt, real_name, role, status) VALUES (?, ?, ?, ?, ?, 1)').run(
+        'admin', devPassword, 'default_salt', '系统管理员', 'super'
+      );
+      console.log('✅ Default admin account created (username: admin, password: admin123) — dev mode only');
+    }
   }
 
   // 初始化默认 BIN
