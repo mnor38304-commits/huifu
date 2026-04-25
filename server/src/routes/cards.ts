@@ -23,7 +23,7 @@ interface ChannelSDK {
 async function getChannelSDK(): Promise<ChannelSDK> {
   // 1. UQPay 渠道
   const uqpayChannel = db.prepare(
-    "SELECT * FROM card_channels WHERE channel_code = 'UQPAY' AND status = 1"
+    "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'UQPAY' AND status = 1"
   ).get() as any;
 
   if (uqpayChannel) {
@@ -50,7 +50,7 @@ async function getChannelSDK(): Promise<ChannelSDK> {
 
   // 2. DogPay 渠道（兼容旧接口）
   const dogpayChannel = db.prepare(
-    "SELECT * FROM card_channels WHERE channel_code = 'dogpay' AND status = 1"
+    "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay' AND status = 1"
   ).get() as any;
 
   if (dogpayChannel) {

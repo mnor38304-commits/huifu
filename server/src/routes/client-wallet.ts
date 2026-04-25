@@ -33,7 +33,7 @@ export const initWalletTables = () => {
 async function getWalletChannelSDK() {
   // 1. UQPay 渠道（优先级最高）
   const uqpayChannel = db.prepare(
-    "SELECT * FROM card_channels WHERE channel_code = 'UQPAY' AND status = 1"
+    "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'UQPAY' AND status = 1"
   ).get() as any;
   if (uqpayChannel) {
     let config: Record<string, any> = {};
@@ -54,7 +54,7 @@ async function getWalletChannelSDK() {
 
   // 2. CoinPal 渠道（收银台模式）
   const coinpalChannel = db.prepare(
-    "SELECT * FROM card_channels WHERE channel_code = 'COINPAL' AND status = 1"
+    "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'COINPAL' AND status = 1"
   ).get() as any;
   if (coinpalChannel) {
     try {
@@ -76,7 +76,7 @@ async function getWalletChannelSDK() {
 
   // 3. DogPay 渠道（最后兜底）
   const dogpayChannel = db.prepare(
-    "SELECT * FROM card_channels WHERE channel_code = 'DOGPAY' AND status = 1"
+    "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay' AND status = 1"
   ).get() as any;
   if (dogpayChannel) {
     try {
@@ -378,7 +378,7 @@ router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, 
   if (order.coinpal_reference && order.status === 0) {
     try {
       const channel = db.prepare(
-        "SELECT * FROM card_channels WHERE channel_code = 'COINPAL' AND status = 1"
+        "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'COINPAL' AND status = 1"
       ).get() as any;
       if (channel) {
         let config: Record<string, any> = {};
