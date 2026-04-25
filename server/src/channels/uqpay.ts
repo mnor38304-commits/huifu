@@ -861,23 +861,36 @@ export class UqPaySDK {
 
     let synced = 0;
 
+    // 收集所有已使用的 bin_code，处理同 BIN 多产品的情况
+    const usedBinCodes = new Set<string>();
+
     for (const p of products) {
       const externalBinId = p.product_id;
-      const binCode = p.card_bin || externalBinId.slice(0, 8);
+      let binCode = p.card_bin || externalBinId.slice(0, 8);
       const binName = `UQPay ${p.card_scheme} ${p.mode_type}`;
       const cardBrand = p.card_scheme;
       const currency = p.card_currency[0] || 'USD';
       const status = ['ENABLED', 'ACTIVE'].some(s => p.product_status.toUpperCase().includes(s)) ? 1 : 0;
       const rawJson = JSON.stringify(p);
 
+      // bin_code 有 UNIQUE 约束，同 BIN 多产品时追加序号避免冲突
+      if (usedBinCodes.has(binCode)) {
+        let suffix = 2;
+        while (usedBinCodes.has(`${binCode}_${suffix}`)) suffix++;
+        binCode = `${binCode}_${suffix}`;
+      }
+      usedBinCodes.add(binCode);
+
       // 检查是否已存在（按 channel_code + external_bin_id）
-      const checkStmt = database.prepare('SELECT id FROM card_bins WHERE channel_code = ? AND external_bin_id = ?');
+      const checkStmt = database.prepare('SELECT id, bin_code FROM card_bins WHERE channel_code = ? AND external_bin_id = ?');
       checkStmt.bind(['uqpay', externalBinId]);
       const exists = checkStmt.step();
       let existingId: number | null = null;
       if (exists) {
         const row = checkStmt.getAsObject();
         existingId = row?.id || null;
+        // 已存在时复用原 bin_code 以避免不必要的变更
+        if (row?.bin_code) binCode = row.bin_code;
       }
       checkStmt.free();
 
