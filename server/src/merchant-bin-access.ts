@@ -37,6 +37,7 @@ export function getMerchantOpenableBins(userId: number) {
       FROM card_bins b
       INNER JOIN merchant_bin_permissions mbp ON mbp.bin_id = b.id
       WHERE mbp.user_id = ? AND mbp.status = 1 AND b.status = 1
+        AND (b.channel_code != 'uqpay' OR json_extract(b.raw_json, '$.mode_type') = 'SINGLE')
       ORDER BY b.id ASC
     `).all(userId) as any[]
   }
@@ -46,6 +47,7 @@ export function getMerchantOpenableBins(userId: number) {
            channel_code, external_bin_id, open_fee, monthly_fee
     FROM card_bins
     WHERE status = 1
+      AND (channel_code != 'uqpay' OR json_extract(raw_json, '$.mode_type') = 'SINGLE')
     ORDER BY id ASC
   `).all() as any[]
 }
