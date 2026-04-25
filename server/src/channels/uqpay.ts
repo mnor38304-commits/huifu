@@ -510,44 +510,49 @@ export class UqPaySDK {
   }
 
   /**
-   * 根据币种获取最佳卡产品 ID
+   * 根据币种获取 SINGLE 模式卡产品
+   *
+   * 业务约束：只开 SINGLE 卡（独立额度），不开 SHARE 卡（共享额度）。
    *
    * 过滤条件：
    * - card_form 包含 VIR（虚拟卡）
    * - card_currency 包含指定币种
    * - product_status 为 ENABLED 或 ACTIVE
-   * - 优先选择 SINGLE 模式（独立额度），其次 SHARE
+   * - mode_type 严格为 SINGLE
    *
-   * @returns 标准化后的 product_id，可直接用于 createCard 的 card_product_id
+   * @returns 标准化后的 SINGLE 卡产品，可直接用于 createCard 的 card_product_id
+   * @throws 如果没有符合条件的 SINGLE 产品，抛出明确错误
    */
   async getCardProductId(currency: string = 'USD'): Promise<UqPayCardProduct> {
     const products = await this.listCardProducts();
 
     const eligibleStatuses = ['ENABLED', 'ACTIVE'];
-    const filtered = products.filter(p => {
+    const singleOnly = products.filter(p => {
       const hasVir = p.card_form.some(f => f.toUpperCase() === 'VIR');
       const hasCur = p.card_currency.some(c => c.toUpperCase() === currency.toUpperCase());
       const isActive = eligibleStatuses.some(s => p.product_status.toUpperCase().includes(s));
-      return hasVir && hasCur && isActive;
+      const isSingle = p.mode_type === 'SINGLE';
+      return hasVir && hasCur && isActive && isSingle;
     });
 
-    if (filtered.length === 0) {
+    if (singleOnly.length === 0) {
+      // 收集 SHARE 产品信息用于错误提示（帮助排查）
+      const shareProducts = products.filter(p => {
+        const hasVir = p.card_form.some(f => f.toUpperCase() === 'VIR');
+        const hasCur = p.card_currency.some(c => c.toUpperCase() === currency.toUpperCase());
+        const isActive = eligibleStatuses.some(s => p.product_status.toUpperCase().includes(s));
+        return hasVir && hasCur && isActive && p.mode_type !== 'SINGLE';
+      });
       throw new Error(
-        `[UqPay] 未找到 ${currency} 可用虚拟卡产品。` +
-        `可用产品: ${products.map(p => p.product_id.slice(0, 4)).join(', ') || '无'}`
+        `[UqPay] 未找到可用的 UQPay SINGLE 虚拟卡产品（${currency}）。` +
+        `可用虚拟卡产品共 ${singleOnly.length + shareProducts.length} 个，其中 SHARE ${shareProducts.length} 个。` +
+        `请联系 UQPay 开通 SINGLE 模式卡产品。`
       );
     }
 
-    // 优先 SINGLE 模式（独立额度），其次 SHARE
-    filtered.sort((a, b) => {
-      if (a.mode_type === 'SINGLE' && b.mode_type !== 'SINGLE') return -1;
-      if (a.mode_type !== 'SINGLE' && b.mode_type === 'SINGLE') return 1;
-      return 0;
-    });
-
-    const chosen = filtered[0];
+    const chosen = singleOnly[0];
     console.log(
-      '[UqPay] 选择卡产品:',
+      '[UqPay] 选择 SINGLE 卡产品:',
       chosen.product_id.slice(0, 8) + '...',
       `BIN:${chosen.card_bin}`,
       `${chosen.card_scheme}`,
@@ -836,6 +841,9 @@ export class UqPaySDK {
 
   /**
    * 将 UQPay 卡产品同步到 card_bins 表
+   *
+   * 注意：此方法同步所有可用产品（含 SHARE 和 SINGLE），用于管理后台展示和 BIN 管理。
+   * 实际开卡时，getCardProductId() 会严格只选择 SINGLE 产品。
    *
    * 字段映射：
    * - external_bin_id ← product_id
