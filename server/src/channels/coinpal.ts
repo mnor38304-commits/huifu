@@ -119,12 +119,19 @@ export class CoinPalSDK {
 
   /**
    * 查询订单状态
+   * CoinPal 文档要求使用 gcid（即 CoinPal 系统订单号 reference）查询
    */
   async queryOrder(reference: string): Promise<any> {
     const url = this.apiBaseUrl + '/gateway/pay/query';
     const body = new URLSearchParams();
-    body.append('reference', reference);
-    const resp = await fetch(url, { method: 'POST', body });
+    body.append('gcid', reference);
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: body.toString(),
+    });
     return resp.json();
   }
 
