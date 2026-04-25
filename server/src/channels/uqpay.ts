@@ -74,20 +74,36 @@ export interface UqPayCardProduct {
   required_fields?: Array<{ name: string; type: string; required: boolean }>;
 }
 
+/**
+ * UQPay Card 详情 — 标准化接口
+ *
+ * UQPay API 实际返回字段可能不同（如 card_id vs id、card_status vs status），
+ * createCard() 和 getCard() 内部负责将原始响应标准化为此接口。
+ */
 export interface UqPayCard {
-  id: string;
+  /** 卡片 ID（UQPay 实际返回 card_id，兼容 id） */
+  card_id: string;
+  /** 卡订单 ID（创建时返回） */
+  card_order_id?: string;
   cardholder_id: string;
   card_product_id: string;
   last4: string;
   expiry_month: string;
   expiry_year: string;
-  status: 'PENDING' | 'ACTIVE' | 'FROZEN' | 'BLOCKED' | 'CANCELLED' | 'LOST' | 'STOLEN' | 'FAILED';
+  /** 卡状态（UQPay 实际返回 card_status，兼容 status） */
+  card_status: string;
+  /** 订单状态（创建时返回：PROCESSING / COMPLETED 等） */
+  order_status?: string;
   currency: string;
   card_limit: number;
-  created_at: string;
+  card_available_balance?: number;
+  /** 创建时间（UQPay 实际返回 create_time，兼容 created_at） */
+  create_time: string;
   updated_at: string;
-  card_number?: string; // 明文卡号仅在创建时返回一次，后续需从渠道平台获取
-  cvv?: string;          // 同上
+  /** 明文卡号仅在创建时返回一次，后续需从渠道平台获取 */
+  card_number?: string;
+  /** 同上 */
+  cvv?: string;
 }
 
 export interface UqPayTransfer {
@@ -566,6 +582,10 @@ export class UqPaySDK {
 
   /**
    * 创建虚拟卡/实体卡
+   *
+   * UQPay POST /api/v1/issuing/cards 响应字段：
+   *   card_id, card_order_id, cardholder_id, card_status, order_status, create_time
+   * 注意：PENDING 状态不返回 last4/expiry_month/expiry_year
    */
   async createCard(params: {
     cardholderId: string;
@@ -577,16 +597,19 @@ export class UqPaySDK {
     autoCancelTrigger?: 'ON_AUTH' | 'ON_CAPTURE';
     metadata?: Record<string, string>;
   }): Promise<{
-    id: string;
+    card_id: string;
+    card_order_id: string;
+    card_status: string;
+    order_status: string;
     last4: string;
     expiryMonth: string;
     expiryYear: string;
-    status: string;
     cardNumber?: string;
     cvv?: string;
     createdAt: string;
+    rawJson: any;
   }> {
-    const card = await this.request<UqPayCard>('POST', '/api/v1/issuing/cards', {
+    const raw = await this.request<any>('POST', '/api/v1/issuing/cards', {
       cardholder_id: params.cardholderId,
       card_product_id: params.cardProductId,
       card_currency: params.cardCurrency || 'USD',
@@ -596,25 +619,82 @@ export class UqPaySDK {
       ...(params.metadata && { metadata: params.metadata }),
     });
 
-    // 注意: UQPay 创建卡响应中 card_number / cvv 可能为空（安全原因），
-    // 完整卡面信息需从 UQPay Dashboard 或 webhook 获取
+    // 兼容字段映射：card_id / id
+    const cardId = raw.card_id || raw.id || '';
+    // 兼容字段映射：card_status / status
+    const cardStatus = raw.card_status || raw.status || 'UNKNOWN';
+    const orderStatus = raw.order_status || 'PROCESSING';
+    const cardOrderId = raw.card_order_id || raw.order_id || '';
+    // PENDING 状态不返回 last4/expiry
+    const last4 = raw.last4 || '';
+    const expiryMonth = raw.expiry_month || '';
+    const expiryYear = raw.expiry_year || '';
+    // 兼容字段映射：create_time / created_at
+    const createdAt = raw.create_time || raw.created_at || '';
+
+    if (!cardId) {
+      throw new Error('[UqPay] createCard: 未获取到 card_id');
+    }
+
     return {
-      id: card.id,
-      last4: card.last4,
-      expiryMonth: card.expiry_month,
-      expiryYear: card.expiry_year,
-      status: card.status,
-      cardNumber: (card as any).card_number || undefined,
-      cvv: (card as any).cvv || undefined,
-      createdAt: card.created_at,
+      card_id: cardId,
+      card_order_id: cardOrderId,
+      card_status: cardStatus,
+      order_status: orderStatus,
+      last4,
+      expiryMonth,
+      expiryYear,
+      cardNumber: raw.card_number || undefined,
+      cvv: raw.cvv || undefined,
+      createdAt,
+      rawJson: raw,
     };
   }
 
   /**
    * 获取卡片详情
+   *
+   * UQPay GET /api/v1/issuing/cards/:cardId 响应字段：
+   *   card_id, card_order_id, cardholder_id, card_status, order_status,
+   *   last4, expiry_month, expiry_year, currency, card_limit, card_available_balance,
+   *   create_time, updated_at
+   *
+   * 注意：不返回 card_number / cvv（需通过 PAN Token / Secure iFrame 获取）
    */
-  async getCard(cardId: string): Promise<UqPayCard> {
-    return this.request<UqPayCard>('GET', `/api/v1/issuing/cards/${cardId}`);
+  async getCard(cardId: string): Promise<{
+    card_id: string;
+    card_order_id: string;
+    cardholder_id: string;
+    card_status: string;
+    order_status: string;
+    last4: string;
+    expiry_month: string;
+    expiry_year: string;
+    currency: string;
+    card_limit: number;
+    card_available_balance: number;
+    create_time: string;
+    updated_at: string;
+    rawJson: any;
+  }> {
+    const raw = await this.request<any>('GET', `/api/v1/issuing/cards/${cardId}`);
+
+    return {
+      card_id: raw.card_id || raw.id || cardId,
+      card_order_id: raw.card_order_id || raw.order_id || '',
+      cardholder_id: raw.cardholder_id || '',
+      card_status: raw.card_status || raw.status || 'UNKNOWN',
+      order_status: raw.order_status || '',
+      last4: raw.last4 || '',
+      expiry_month: raw.expiry_month || '',
+      expiry_year: raw.expiry_year || '',
+      currency: raw.currency || raw.card_currency || 'USD',
+      card_limit: Number(raw.card_limit ?? 0),
+      card_available_balance: Number(raw.card_available_balance ?? 0),
+      create_time: raw.create_time || raw.created_at || '',
+      updated_at: raw.updated_at || '',
+      rawJson: raw,
+    };
   }
 
   /**
