@@ -203,8 +203,11 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         countryCode: 'US',
         phoneNumber: user.phone || '+10000000000',
         nationality: user.country_code || 'US',
-        database: (db as any).getDb?.() || db,
+        database: getDb(),
       });
+
+      // 持久化本地缓存到磁盘
+      saveDatabase();
 
       uqpayCardholderId = cardholder.id;
 

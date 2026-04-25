@@ -209,6 +209,7 @@ export class UqPaySDK {
 
   /**
    * 确保 uqpay_cardholders 本地缓存表存在
+   * 注意: database 参数是 sql.js 原生 Database 对象，使用原生 API
    */
   private _tableEnsured = false;
 
@@ -239,24 +240,35 @@ export class UqPaySDK {
 
   /**
    * 从本地缓存查询 user_id 对应的 cardholder
+   * 使用 sql.js 原生 prepared statement API
    */
   private getLocalCardholder(database: any, userId: number): UqPayCardholder | null {
     this.ensureCardholderTable(database);
-    const row = database.prepare('SELECT * FROM uqpay_cardholders WHERE user_id = ?').get(userId) as any;
-    if (!row) return null;
-    return {
-      id: row.uqpay_cardholder_id,
-      cardholder_id: row.uqpay_cardholder_id,
-      email: row.email,
-      first_name: '',
-      last_name: '',
-      country_code: '',
-      phone_number: row.phone_number || '',
-      status: row.cardholder_status as any || 'SUCCESS',
-      cardholder_status: row.cardholder_status,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
+    try {
+      const stmt = database.prepare('SELECT * FROM uqpay_cardholders WHERE user_id = ?');
+      stmt.bind([userId]);
+      if (!stmt.step()) { stmt.free(); return null; }
+      const cols = stmt.getColumnNames();
+      const vals = stmt.get();
+      stmt.free();
+      const row: any = {};
+      cols.forEach((c: string, i: number) => { row[c] = vals[i]; });
+      return {
+        id: row.uqpay_cardholder_id || '',
+        cardholder_id: row.uqpay_cardholder_id || '',
+        email: row.email || '',
+        first_name: '',
+        last_name: '',
+        country_code: '',
+        phone_number: row.phone_number || '',
+        status: (row.cardholder_status || 'SUCCESS') as UqPayCardholder['status'],
+        cardholder_status: row.cardholder_status || '',
+        created_at: row.created_at || '',
+        updated_at: row.updated_at || '',
+      };
+    } catch (e) {
+      return null;
+    }
   }
 
   /**
@@ -381,19 +393,24 @@ export class UqPaySDK {
     const status = ch.cardholder_status || ch.status || 'SUCCESS';
     const rawJson = JSON.stringify(ch).slice(0, 2000);
     try {
-      const existing = database.prepare('SELECT id FROM uqpay_cardholders WHERE user_id = ?').get(userId) as any;
-      if (existing) {
-        database.prepare(`
-          UPDATE uqpay_cardholders SET
-            uqpay_cardholder_id = ?, email = ?, phone_number = ?,
-            cardholder_status = ?, raw_json = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE user_id = ?
-        `).run(id, ch.email, ch.phone_number, status, rawJson, userId);
+      // 检查是否已存在
+      const checkStmt = database.prepare('SELECT id FROM uqpay_cardholders WHERE user_id = ?');
+      checkStmt.bind([userId]);
+      const exists = checkStmt.step();
+      checkStmt.free();
+
+      if (exists) {
+        const updateStmt = database.prepare(
+          'UPDATE uqpay_cardholders SET uqpay_cardholder_id = ?, email = ?, phone_number = ?, cardholder_status = ?, raw_json = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
+        );
+        updateStmt.run([id, ch.email, ch.phone_number, status, rawJson, userId]);
+        updateStmt.free();
       } else {
-        database.prepare(`
-          INSERT INTO uqpay_cardholders (user_id, uqpay_cardholder_id, email, phone_number, cardholder_status, raw_json)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(userId, id, ch.email, ch.phone_number, status, rawJson);
+        const insertStmt = database.prepare(
+          'INSERT INTO uqpay_cardholders (user_id, uqpay_cardholder_id, email, phone_number, cardholder_status, raw_json) VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        insertStmt.run([userId, id, ch.email, ch.phone_number, status, rawJson]);
+        insertStmt.free();
       }
     } catch (e) {
       console.warn('[UqPay] 保存 cardholder 到本地缓存失败:', e);
