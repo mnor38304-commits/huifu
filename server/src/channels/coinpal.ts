@@ -94,7 +94,7 @@ export class CoinPalSDK {
       resp = await fetch(url, {
         method: 'POST',
         headers: {
-          // 不设置 Content-Type，让 fetch 自动设为 application/x-www-form-urlencoded
+          'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
       });
