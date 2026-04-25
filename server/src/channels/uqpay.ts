@@ -29,12 +29,16 @@ export interface UqPayToken {
 
 export interface UqPayCardholder {
   id: string;
+  /** UQPay POST 创建返回 cardholder_id（GET 详情返回 id） */
+  cardholder_id?: string;
   email: string;
   first_name: string;
   last_name: string;
   country_code: string;
   phone_number: string;
   status: 'PENDING' | 'SUCCESS' | 'INCOMPLETE' | 'FAILED';
+  /** UQPay POST 创建返回 cardholder_status（GET 详情返回 status） */
+  cardholder_status?: string;
   created_at: string;
   updated_at: string;
 }
@@ -204,9 +208,68 @@ export class UqPaySDK {
   }
 
   /**
+   * 确保 uqpay_cardholders 本地缓存表存在
+   */
+  private _tableEnsured = false;
+
+  private ensureCardholderTable(database: any): void {
+    if (this._tableEnsured) return;
+    try {
+      database.run(`
+        CREATE TABLE IF NOT EXISTS uqpay_cardholders (
+          id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id            INTEGER NOT NULL,
+          uqpay_cardholder_id TEXT NOT NULL,
+          email              TEXT,
+          phone_number       TEXT,
+          cardholder_status  TEXT,
+          raw_json           TEXT,
+          created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id),
+          UNIQUE(uqpay_cardholder_id)
+        )
+      `);
+      try { database.run('CREATE INDEX IF NOT EXISTS idx_uqpay_ch_email ON uqpay_cardholders(email)'); } catch (_) {}
+      this._tableEnsured = true;
+    } catch (e) {
+      console.warn('[UqPay] 创建 uqpay_cardholders 表失败:', e);
+    }
+  }
+
+  /**
+   * 从本地缓存查询 user_id 对应的 cardholder
+   */
+  private getLocalCardholder(database: any, userId: number): UqPayCardholder | null {
+    this.ensureCardholderTable(database);
+    const row = database.prepare('SELECT * FROM uqpay_cardholders WHERE user_id = ?').get(userId) as any;
+    if (!row) return null;
+    return {
+      id: row.uqpay_cardholder_id,
+      cardholder_id: row.uqpay_cardholder_id,
+      email: row.email,
+      first_name: '',
+      last_name: '',
+      country_code: '',
+      phone_number: row.phone_number || '',
+      status: row.cardholder_status as any || 'SUCCESS',
+      cardholder_status: row.cardholder_status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
+  /**
    * 创建持卡人（幂等，已存在则返回现有）
+   *
+   * 查找顺序：
+   * 1. 内存缓存 (_cachedCardholderId)
+   * 2. 本地缓存表 (uqpay_cardholders by userId)
+   * 3. UQPay API 列表遍历 (findCardholderByEmail)
+   * 4. 调用 UQPay 创建
    */
   async getOrCreateCardholder(params: {
+    userId?: number;
     email: string;
     firstName: string;
     lastName: string;
@@ -215,34 +278,126 @@ export class UqPaySDK {
     dateOfBirth?: string;
     nationality?: string;
     gender?: 'MALE' | 'FEMALE';
+    /** sql.js 数据库实例，用于本地缓存读写 */
+    database?: any;
   }): Promise<UqPayCardholder> {
-    // 先查缓存
+    // 1. 内存缓存
     if (this._cachedCardholderId) {
       return this.getCardholder(this._cachedCardholderId);
     }
 
-    // 再查列表
+    // 2. 本地缓存表
+    if (params.userId && params.database) {
+      const local = this.getLocalCardholder(params.database, params.userId);
+      if (local) {
+        this._cachedCardholderId = local.id;
+        console.log('[UqPay] 从本地缓存获取持卡人:', local.id.slice(0, 8) + '...', 'user_id:', params.userId);
+        return local;
+      }
+    }
+
+    // 3. UQPay API 列表查找
     const existing = await this.findCardholderByEmail(params.email);
     if (existing) {
       this._cachedCardholderId = existing.id;
+      // 回写本地缓存（如果提供了 userId 和 database）
+      if (params.userId && params.database) {
+        this.saveCardholderToLocal(params.database, params.userId, existing);
+      }
       return existing;
     }
 
-    // 创建新持卡人
-    const created = await this.request<UqPayCardholder>('POST', '/api/v1/issuing/cardholders', {
-      email: params.email,
-      first_name: params.firstName,
-      last_name: params.lastName,
-      country_code: params.countryCode,
-      phone_number: params.phoneNumber,
-      ...(params.dateOfBirth && { date_of_birth: params.dateOfBirth }),
-      ...(params.nationality && { nationality: params.nationality }),
-      ...(params.gender && { gender: params.gender }),
-    });
+    // 4. 创建新持卡人
+    let created: any;
+    try {
+      created = await this.request<any>('POST', '/api/v1/issuing/cardholders', {
+        email: params.email,
+        first_name: params.firstName,
+        last_name: params.lastName,
+        country_code: params.countryCode,
+        phone_number: params.phoneNumber,
+        ...(params.dateOfBirth && { date_of_birth: params.dateOfBirth }),
+        ...(params.nationality && { nationality: params.nationality }),
+        ...(params.gender && { gender: params.gender }),
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      if (msg.includes('email_duplicated') || msg.includes('duplicate')) {
+        // email 重复 — 尝试从列表获取已有 cardholder
+        console.warn('[UqPay] cardholder email 已存在，尝试从列表获取:', params.email);
+        const dup = await this.findCardholderByEmail(params.email);
+        if (dup) {
+          this._cachedCardholderId = dup.id;
+          if (params.userId && params.database) {
+            this.saveCardholderToLocal(params.database, params.userId, dup);
+          }
+          return dup;
+        }
+      }
+      if (msg.includes('invalid_phone_number') || msg.includes('phone')) {
+        console.error('[UqPay] cardholder 创建失败：手机号格式错误');
+      }
+      throw err;
+    }
 
-    this._cachedCardholderId = created.id;
-    console.log('[UqPay] 持卡人创建成功:', created.id);
-    return created;
+    // UQPay POST 返回 cardholder_id（GET 返回 id），兼容两种
+    const cardholderId = created.cardholder_id || created.id;
+    if (!cardholderId) {
+      throw new Error('[UqPay] 创建持卡人成功但未返回 cardholder_id，响应: ' + JSON.stringify(created).slice(0, 200));
+    }
+
+    // 标准化为 GET 返回格式
+    const normalized: UqPayCardholder = {
+      id: cardholderId,
+      cardholder_id: cardholderId,
+      email: created.email || params.email,
+      first_name: created.first_name || params.firstName,
+      last_name: created.last_name || params.lastName,
+      country_code: created.country_code || params.countryCode,
+      phone_number: created.phone_number || params.phoneNumber,
+      status: (created.cardholder_status || created.status || 'SUCCESS') as any,
+      cardholder_status: created.cardholder_status || created.status,
+      created_at: created.created_at || new Date().toISOString(),
+      updated_at: created.updated_at || new Date().toISOString(),
+    };
+
+    this._cachedCardholderId = cardholderId;
+    console.log('[UqPay] 持卡人创建成功:', cardholderId.slice(0, 8) + '...', 'status:', normalized.status);
+
+    // 保存到本地缓存
+    if (params.userId && params.database) {
+      this.saveCardholderToLocal(params.database, params.userId, normalized);
+    }
+
+    return normalized;
+  }
+
+  /**
+   * 保存 cardholder 到本地缓存表
+   */
+  private saveCardholderToLocal(database: any, userId: number, ch: UqPayCardholder): void {
+    this.ensureCardholderTable(database);
+    const id = ch.cardholder_id || ch.id;
+    const status = ch.cardholder_status || ch.status || 'SUCCESS';
+    const rawJson = JSON.stringify(ch).slice(0, 2000);
+    try {
+      const existing = database.prepare('SELECT id FROM uqpay_cardholders WHERE user_id = ?').get(userId) as any;
+      if (existing) {
+        database.prepare(`
+          UPDATE uqpay_cardholders SET
+            uqpay_cardholder_id = ?, email = ?, phone_number = ?,
+            cardholder_status = ?, raw_json = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+        `).run(id, ch.email, ch.phone_number, status, rawJson, userId);
+      } else {
+        database.prepare(`
+          INSERT INTO uqpay_cardholders (user_id, uqpay_cardholder_id, email, phone_number, cardholder_status, raw_json)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(userId, id, ch.email, ch.phone_number, status, rawJson);
+      }
+    } catch (e) {
+      console.warn('[UqPay] 保存 cardholder 到本地缓存失败:', e);
+    }
   }
 
   /**
