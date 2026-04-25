@@ -24,11 +24,15 @@ api.interceptors.response.use(r => r.data, err => {
     document.cookie = 'vcc_token=; Max-Age=0; path=/';
     // 避免在 /login /register /forgot-password 页面重复跳转导致死循环
     const publicPaths = ['/login', '/register', '/forgot-password']
-    if (!publicPaths.some(p => window.location.pathname.startsWith(p))) {
+    const isPublicRoute = publicPaths.some(p => window.location.pathname.startsWith(p))
+    if (!isPublicRoute) {
+      // 非 public routes：跳转登录页（页面会刷新，Promise 不会停留）
       window.location.href = '/login'
+      return new Promise(() => {}) // 跳转后页面刷新，Promise 不会停留
     }
-    // 返回永不 resolve 的 Promise，让调用方静默等待
-    return new Promise(() => {})
+    // ✅ FIX: public routes 上必须 reject，否则调用方的 finally/setLoading 永远不执行
+    // 场景：App.tsx checkAuth() 在 /login 页面调 getUserInfo() → 401 → 必须让 finally 跑到
+    return Promise.reject(err)
   }
   return Promise.reject(err)
 })
