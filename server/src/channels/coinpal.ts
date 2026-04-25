@@ -69,7 +69,7 @@ export class CoinPalSDK {
 
     // 2. 构建 form-data 请求体
     const body = new URLSearchParams();
-    body.append('version', '2.0');
+    body.append('version', '2');
     body.append('requestId', requestId);
     body.append('merchantNo', this.merchantNo);
     body.append('merchantName', 'CardGoLink');
