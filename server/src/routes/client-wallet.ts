@@ -389,8 +389,10 @@ router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, 
           apiBaseUrl: channel.api_base_url || undefined,
         });
         const cpResult = await sdk.queryOrder(order.coinpal_reference);
-        // 同步到数据库：仅 status=0 时原子更新为 1，防止重复入账
-        if (cpResult.status === 'paid' || cpResult.status === 'paid_confirming') {
+        console.log(`[Wallet] CoinPal 主动查询: orderNo=${orderNo}, status=${cpResult.status}`);
+
+        // 同步到数据库：仅 status=0 时原子更新，防止重复入账
+        if (cpResult.status === 'paid') {
           // 用底层 database 执行原子更新并检测 affected rows
           const database = getDb();
           database.run(
@@ -429,7 +431,33 @@ router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, 
           } else {
             console.log(`[Wallet] CoinPal 主动查询: 订单${orderNo} 已是终态，跳过加款`);
           }
+        } else if (cpResult.status === 'failed') {
+          // 标记失败
+          const database = getDb();
+          database.run(
+            `UPDATE usdt_orders SET status=2, updated_at=datetime('now')
+            WHERE order_no=? AND status=0`,
+            [orderNo]
+          );
+          database.getRowsModified();
+          saveDatabase();
+          console.log(`[Wallet] CoinPal 主动查询: 订单${orderNo} 已标记失败`);
+        } else if (cpResult.status === 'paid_confirming') {
+          // 待公链确认：更新订单信息但不入账
+          const database = getDb();
+          database.run(
+            `UPDATE usdt_orders SET
+              paid_address = COALESCE(?, paid_address),
+              paid_amount = COALESCE(?, paid_amount),
+              updated_at = datetime('now')
+            WHERE order_no=? AND status=0`,
+            [cpResult.paidAddress || null, cpResult.paidAmount || null, orderNo]
+          );
+          database.getRowsModified();
+          saveDatabase();
+          console.log(`[Wallet] CoinPal 主动查询: 订单${orderNo} paid_confirming，更新信息但不入账`);
         }
+        // paid_confirming / pending / unpaid / partial_paid_confirming 不处理
       }
     } catch (err: any) {
       console.warn('[Wallet] CoinPal 主动查询失败:', err.message);

@@ -72,24 +72,42 @@ router.post('/notify', async (req, res) => {
     }
 
     // 5. 判断状态并更新
-    // CoinPal 状态列表：unpaid / pending / partial_paid_confirming / partial_paid /
-    //                    paid_confirming / paid / failed
-    let newStatus = 0; // 待处理
+    // CoinPal 状态列表：
+    //   unpaid                  — 订单创建成功
+    //   pending                 — 支付处理中
+    //   partial_paid_confirming — 部分支付，待公链确认
+    //   partial_paid            — 部分支付，已确认
+    //   paid_confirming         — 支付成功，待公链确认
+    //   paid                    — 支付成功，公链已确认
+    //   failed                  — 支付失败
+    let newStatus = 0; // 不变更
     let isSuccess = false;
+    let isFailed = false;
 
-    if (status === 'paid' || status === 'paid_confirming' || status === 'partial_paid') {
+    if (status === 'paid') {
+      // 只有 paid（公链已确认）才允许入账
       newStatus = 1;   // 充值成功
       isSuccess = true;
     } else if (status === 'failed') {
       newStatus = 2;   // 充值失败
-      isSuccess = false;
+      isFailed = true;
+    } else if (status === 'paid_confirming') {
+      // 待公链确认：更新订单信息但不入账，等 paid 回调再入账
+      console.log(`[CoinPal IPN] paid_confirming 订单[${orderNo}]，更新信息但不入账`);
+    } else if (status === 'partial_paid') {
+      // 部分支付已确认：不入账，标记失败
+      newStatus = 2;
+      isFailed = true;
+      console.log(`[CoinPal IPN] partial_paid 订单[${orderNo}]，部分支付不自动入账，标记失败`);
     } else {
-      // pending / partial_paid_confirming 等中间状态，记录但不完成
+      // unpaid / pending / partial_paid_confirming 等中间状态，记录但不处理
       console.log(`[CoinPal IPN] 状态[${status}]，订单[${orderNo}]暂不处理`);
     }
 
-    // 6. 更新订单（仅 status=0 → newStatus 的原子更新，防重复入账）
+    // 6. 更新订单
     const now = new Date().toISOString();
+
+    // 6a. 对于终态（paid / failed / partial_paid），原子更新 status
     if (newStatus !== 0) {
       const existingPaidAddress = order.paid_address ? order.paid_address : null;
       const existingPaidAmount = order.paid_amount ? order.paid_amount : null;
@@ -154,6 +172,28 @@ router.post('/notify', async (req, res) => {
           }
         }
       }
+    }
+
+    // 6b. 对于 paid_confirming 中间状态，更新订单的 paid_amount/paid_address 但不改 status
+    if (newStatus === 0 && status === 'paid_confirming' && order.status === 0) {
+      const database = getDb();
+      database.run(
+        `UPDATE usdt_orders SET
+          paid_address = COALESCE(?, paid_address),
+          paid_amount = COALESCE(?, paid_amount),
+          channel_order_no = COALESCE(?, channel_order_no),
+          updated_at = ?
+        WHERE order_no = ? AND status = 0`,
+        [
+          paidAddress ? paidAddress : null,
+          paidAmount ? paidAmount : null,
+          reference ? reference : null,
+          now,
+          orderNo
+        ]
+      );
+      saveDatabase();
+      console.log(`[CoinPal IPN] 订单[${orderNo}] paid_confirming 信息已更新，paidAmount=${paidAmount || 'N/A'}`);
     }
 
     // 8. 返回 success 给 CoinPal（重要：否则会重试）
