@@ -191,17 +191,19 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         return res.json({ code: 401, message: '用户不存在', timestamp: Date.now() });
       }
 
-      // 1. 获取或创建持卡人
+      // 1. 获取或创建持卡人（含本地缓存）
       const firstName = (user.nickname || user.email || 'User').split(/[@.\s]/)[0] || 'User';
       const lastName = (user.email || 'User').split(/[@]/)[0] || 'User';
 
       const cardholder = await sdk.getOrCreateCardholder({
+        userId: req.user!.userId,
         email: user.email,
         firstName,
         lastName,
         countryCode: 'US',
         phoneNumber: user.phone || '+10000000000',
         nationality: user.country_code || 'US',
+        database: (db as any).getDb?.() || db,
       });
 
       uqpayCardholderId = cardholder.id;
