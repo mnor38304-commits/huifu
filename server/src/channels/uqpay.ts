@@ -842,8 +842,11 @@ export class UqPaySDK {
   /**
    * 将 UQPay 卡产品同步到 card_bins 表
    *
-   * 注意：此方法同步所有可用产品（含 SHARE 和 SINGLE），用于管理后台展示和 BIN 管理。
-   * 实际开卡时，getCardProductId() 会严格只选择 SINGLE 产品。
+   * SINGLE-only 规则：
+   * - 只将 mode_type=SINGLE、card_form 包含 VIR、card_currency 包含 USD、product_status=ENABLED/ACTIVE 的产品设置为 status=1
+   * - SHARE 产品（及其他不符合条件的产品）保留在 card_bins 中，但 status=0，不可用于开卡
+   * - 即使 UQPay 返回 SHARE 产品状态为 ENABLED，也强制设为 status=0
+   * - 再次同步时不会把 SHARE 重新启用
    *
    * 字段映射：
    * - external_bin_id ← product_id
@@ -870,8 +873,14 @@ export class UqPaySDK {
       const binName = `UQPay ${p.card_scheme} ${p.mode_type}`;
       const cardBrand = p.card_scheme;
       const currency = p.card_currency[0] || 'USD';
-      const status = ['ENABLED', 'ACTIVE'].some(s => p.product_status.toUpperCase().includes(s)) ? 1 : 0;
       const rawJson = JSON.stringify(p);
+
+      // SINGLE-only 规则：只有同时满足以下条件才 status=1
+      const isEnabled = ['ENABLED', 'ACTIVE'].some(s => p.product_status.toUpperCase().includes(s));
+      const isSingle = (p.mode_type || '').toUpperCase() === 'SINGLE';
+      const hasVir = Array.isArray(p.card_form) && p.card_form.some((f: string) => f.toUpperCase() === 'VIR');
+      const hasUsd = Array.isArray(p.card_currency) && p.card_currency.some((c: string) => c.toUpperCase() === 'USD');
+      const status = (isSingle && hasVir && hasUsd && isEnabled) ? 1 : 0;
 
       // bin_code 有 UNIQUE 约束，同 BIN 多产品时追加序号避免冲突
       if (usedBinCodes.has(binCode)) {
@@ -914,7 +923,8 @@ export class UqPaySDK {
         `bin=${binCode}`,
         `scheme=${cardBrand}`,
         `mode=${p.mode_type}`,
-        `status=${p.product_status}`
+        `product_status=${p.product_status}`,
+        `bin_status=${status}${status === 0 ? ` (SINGLE-only, 原因: ${!isSingle ? 'mode=' + p.mode_type : !hasVir ? 'no VIR' : !hasUsd ? 'no USD' : 'disabled'})` : ''}`
       );
       synced++;
     }
