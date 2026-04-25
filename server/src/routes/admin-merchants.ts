@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db';
-import { adminAuth } from './admin-auth';
+import { adminAuth, requireAdminRole, writeAdminLog } from './admin-auth';
+import { AdminRequest } from './admin-auth';
 import { getMerchantBinPermissionData, saveMerchantBinAssignments } from '../merchant-bin-access';
 
 const router = Router();
@@ -79,26 +80,50 @@ router.post('/:id/bin-permissions', adminAuth, (req: any, res) => {
   }
 });
 
-router.post('/:id/status', adminAuth, (req: any, res) => {
+router.post('/:id/status', adminAuth, requireAdminRole('admin', 'super'), (req: AdminRequest, res: any) => {
   try {
     const { status } = req.body;
-    db.prepare('UPDATE users SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(status, req.params.id);
+    const userId = req.params.id;
+    const user = db.prepare('SELECT user_no, phone, email FROM users WHERE id = ?').get(userId) as any;
+    db.prepare('UPDATE users SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(status, userId);
     res.json({ code: 0, message: '操作成功', timestamp: Date.now() });
+
+    // 审计日志
+    writeAdminLog({
+      adminId: req.admin!.id,
+      adminName: req.admin!.username,
+      action: `商户状态变更 → ${status === 1 ? '启用' : '禁用'}`,
+      targetType: 'user',
+      targetId: Number(userId),
+      detail: `商户: ${user?.user_no || userId} (${user?.phone || user?.email || ''})`,
+      req,
+    });
   } catch (err: any) {
     res.json({ code: 500, message: err.message, timestamp: Date.now() });
   }
 });
 
-router.post('/kyc/:kycId/audit', adminAuth, (req: any, res) => {
+router.post('/kyc/:kycId/audit', adminAuth, requireAdminRole('admin', 'super'), (req: AdminRequest, res: any) => {
   try {
     const { action, rejectReason } = req.body;
     const kyc = db.prepare('SELECT * FROM kyc_records WHERE id=?').get(req.params.kycId) as any;
     if (!kyc) return res.json({ code: 404, message: 'KYC记录不存在' });
     const newStatus = action === 'approve' ? 2 : 3;
     db.prepare('UPDATE kyc_records SET status=?,reject_reason=?,auditor_id=?,audited_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-      .run(newStatus, rejectReason||null, req.admin.id, req.params.kycId);
+      .run(newStatus, rejectReason||null, req.admin!.id, req.params.kycId);
     db.prepare('UPDATE users SET kyc_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(newStatus, kyc.user_id);
     res.json({ code: 0, message: action==='approve'?'审核通过':'已拒绝', timestamp: Date.now() });
+
+    // 审计日志
+    writeAdminLog({
+      adminId: req.admin!.id,
+      adminName: req.admin!.username,
+      action: `KYC审核: ${action === 'approve' ? '通过' : '拒绝'}`,
+      targetType: 'kyc',
+      targetId: Number(req.params.kycId),
+      detail: `用户ID: ${kyc.user_id}，姓名: ${kyc.real_name}${rejectReason ? '，原因: ' + rejectReason : ''}`,
+      req,
+    });
   } catch (err: any) {
     res.json({ code: 500, message: err.message, timestamp: Date.now() });
   }

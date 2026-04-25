@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import db from '../db';
-import { adminAuth, AdminRequest } from './admin-auth';
+import { adminAuth, AdminRequest, requireAdminRole, writeAdminLog } from './admin-auth';
 
 const router = Router();
 
@@ -63,7 +63,7 @@ router.get('/:userId', adminAuth, (req, res) => {
 });
 
 // ── 调增/调减余额 ─────────────────────────────────────────────
-router.post('/adjust', adminAuth, (req: AdminRequest, res) => {
+router.post('/adjust', adminAuth, requireAdminRole('super', 'finance'), (req: AdminRequest, res) => {
   const { userId, amount, type, reason = '' } = req.body;
   const adminId = req.admin!.id;
   
@@ -133,6 +133,17 @@ router.post('/adjust', adminAuth, (req: AdminRequest, res) => {
     message: '操作成功',
     data: { balance_before: currentBalance, balance_after: newBalance },
     timestamp: Date.now()
+  });
+
+  // 审计日志
+  writeAdminLog({
+    adminId,
+    adminName: req.admin!.username,
+    action: `钱包${type === 'increase' ? '调增' : '调减'}`,
+    targetType: 'wallet',
+    targetId: userId,
+    detail: `${type}: $${numAmount}，余额 $${currentBalance} → $${newBalance}，原因: ${reason || '无'}`,
+    req,
   });
 });
 

@@ -105,7 +105,7 @@ router.post('/send-sms', (req, res: Response<ApiResponse>) => {
 
   console.log(`[SMS] 验证码已发送至 ${phone}: ${code}`);
 
-  res.json({ code: 0, message: '验证码已发送', data: { mockCode: code }, timestamp: Date.now() });
+  res.json({ code: 0, message: '验证码已发送', timestamp: Date.now() });
 });
 
 // 发送邮箱验证码（真实 SMTP）
@@ -141,7 +141,7 @@ router.post('/send-email', async (req, res: Response<ApiResponse>) => {
     verificationCodes.set(email, { code, expires: Date.now() + 5 * 60 * 1000 });
     // 打印验证码到日志（开发环境）
     console.log(`[Email] 验证码已发送至 ${email}: ${code}`);
-    return res.json({ code: 0, message: '验证码已发送至邮箱', data: { mockCode: code }, timestamp: Date.now() });;
+    return res.json({ code: 0, message: '验证码已发送至邮箱', timestamp: Date.now() });;
   } catch (err: any) {
     console.error(`[Email] 验证码发送失败: ${email}`, err);
     return res.status(500).json({
