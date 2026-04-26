@@ -117,13 +117,13 @@ router.post('/notify', async (req, res) => {
         (event_id, event_type, source_id, payload_json, processed_status, created_at)
       VALUES (?, ?, ?, ?, 'PENDING', CURRENT_TIMESTAMP)
     `);
-    // sql.js run() 使用展开参数，不是数组包裹
-    stmt.run(
+    // sql.js stmt.run() 参数为数组形式（与 uqpay.ts 保持一致）
+    stmt.run([
       String(event_id),
       String(event_type || ''),
       String(source_id || ''),
       JSON.stringify(sanitizedPayload),
-    );
+    ]);
     stmt.free();
 
     database.run('COMMIT');
