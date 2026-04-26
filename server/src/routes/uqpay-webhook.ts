@@ -115,14 +115,15 @@ router.post('/notify', async (req, res) => {
     const stmt = database.prepare(`
       INSERT INTO uqpay_webhook_events
         (event_id, event_type, source_id, payload_json, processed_status, created_at)
-      VALUES (?, ?, ?, ?, 'PENDING', CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `);
-    // sql.js stmt.run() 参数为数组形式（与 uqpay.ts 保持一致）
+    // 5个列 + 2个字面量 → stmt.run 传 5 个值（与 uqpay.ts 保持一致）
     stmt.run([
       String(event_id),
       String(event_type || ''),
       String(source_id || ''),
       JSON.stringify(sanitizedPayload),
+      'PENDING',  // processed_status（第5个占位符）
     ]);
     stmt.free();
 
