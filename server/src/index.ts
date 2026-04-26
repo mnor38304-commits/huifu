@@ -27,6 +27,8 @@ import adminWalletRoutes from './routes/admin-wallet';
 
 // Webhook 路由（CoinPal IPN 回调）
 import coinpalWebhookRoutes from './routes/coinpal-webhook';
+// UQPay Webhook 事件接收路由
+import uqpayWebhookRoutes from './routes/uqpay-webhook';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -87,6 +89,9 @@ app.use('/api/admin/wallet', adminWalletRoutes);
 // ── Webhook 回调（CoinPal IPN，无认证）────────────────────────────
 app.use('/api/v1/webhook/coinpal', coinpalWebhookRoutes);
 
+// ── UQPay Webhook 事件接收（无认证，IP 白名单建议在 Nginx 层配置）──
+app.use('/api/v1/webhook/uqpay', uqpayWebhookRoutes);
+
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -107,6 +112,7 @@ async function start() {
   try { db.prepare('ALTER TABLE cards ADD COLUMN channel_code VARCHAR(50)').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE cards ADD COLUMN uqpay_cardholder_id VARCHAR(100)').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE cards ADD COLUMN card_order_id VARCHAR(100)').run(); } catch (_) {}
+  try { db.prepare('ALTER TABLE cards ADD COLUMN balance_id VARCHAR(100)').run(); } catch (_) {}
 
   // 初始化默认管理员账号
   const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
