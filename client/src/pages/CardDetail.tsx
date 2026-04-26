@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
-import { Card, Row, Col, Button, Modal, InputNumber, message, Descriptions, Tag, Space, Divider, Spin } from 'antd'
-import { WalletOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, EyeOutlined, CopyOutlined } from '@ant-design/icons'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Card, Row, Col, Button, Modal, InputNumber, message, Descriptions, Tag, Space, Divider, Spin, Alert } from 'antd'
+import { WalletOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, EyeOutlined, CopyOutlined, ReloadOutlined, SafetyOutlined } from '@ant-design/icons'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getCardDetail, revealCard, topupCard, freezeCard, unfreezeCard, cancelCard } from '../services/api'
+import { getCardDetail, revealCard, getPanToken, topupCard, freezeCard, unfreezeCard, cancelCard } from '../services/api'
+
+const IFRAME_COUNTDOWN_SECONDS = 60
 
 const CardDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -15,34 +17,82 @@ const CardDetail: React.FC = () => {
   const [topupAmount, setTopupAmount] = useState<number>(100)
   const [topupLoading, setTopupLoading] = useState(false)
 
-  useEffect(() => {
-    loadCardDetail()
-  }, [id])
+  // Secure iFrame state
+  const [iframeUrl, setIframeUrl] = useState<string | null>(null)
+  const [iframeLoading, setIframeLoading] = useState(false)
+  const [countdown, setCountdown] = useState<number>(0)
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const loadCardDetail = async () => {
-    try {
-      const res = await getCardDetail(Number(id))
-      if (res.code === 0) {
-        setCard(res.data)
-      }
-    } catch (error) {
-      console.error(error)
-    } finally {
-      setLoading(false)
+  const clearIframe = useCallback(() => {
+    setIframeUrl(null)
+    setCountdown(0)
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current)
+      countdownRef.current = null
     }
-  }
+  }, [])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => clearIframe()
+  }, [clearIframe])
+
+  const startCountdown = useCallback((seconds: number) => {
+    setCountdown(seconds)
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current)
+    }
+    countdownRef.current = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          if (countdownRef.current) {
+            clearInterval(countdownRef.current)
+            countdownRef.current = null
+          }
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }, [])
 
   const handleReveal = async () => {
     if (cardRevealed) {
       setCardRevealed(false)
+      clearIframe()
       return
     }
     setRevealLoading(true)
     try {
       const res = await revealCard(Number(id))
       if (res.code === 0) {
-        setCard({ ...card, ...res.data })
-        setCardRevealed(true)
+        const revealData = res.data
+
+        if (revealData.mode === 'secure_iframe') {
+          // UQPay Secure iFlow mode: fetch pan-token then render iframe
+          setCardRevealed(true)
+          setCard({ ...card, ...revealData })
+          setIframeLoading(true)
+          try {
+            const tokenRes = await getPanToken(Number(id))
+            if (tokenRes.code === 0) {
+              setIframeUrl(tokenRes.data.iframeUrl)
+              startCountdown(tokenRes.data.expiresIn)
+            } else {
+              message.error(tokenRes.message || '获取 Secure iFrame 失败')
+              setCardRevealed(false)
+            }
+          } catch (err: any) {
+            message.error(err.response?.data?.message || '获取 Secure iFrame 失败')
+            setCardRevealed(false)
+          } finally {
+            setIframeLoading(false)
+          }
+        } else {
+          // Mock / DogPay legacy mode
+          setCard({ ...card, ...revealData })
+          setCardRevealed(true)
+        }
       } else {
         message.error(res.message)
       }
@@ -50,6 +100,24 @@ const CardDetail: React.FC = () => {
       message.error(error.response?.data?.message || '获取失败')
     } finally {
       setRevealLoading(false)
+    }
+  }
+
+  const handleRefreshIframe = async () => {
+    clearIframe()
+    setIframeLoading(true)
+    try {
+      const tokenRes = await getPanToken(Number(id))
+      if (tokenRes.code === 0) {
+        setIframeUrl(tokenRes.data.iframeUrl)
+        startCountdown(tokenRes.data.expiresIn)
+      } else {
+        message.error(tokenRes.message || '重新获取失败')
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '重新获取失败')
+    } finally {
+      setIframeLoading(false)
     }
   }
 
@@ -72,6 +140,19 @@ const CardDetail: React.FC = () => {
       message.error(error.response?.data?.message || '充值失败')
     } finally {
       setTopupLoading(false)
+    }
+  }
+
+  const loadCardDetail = async () => {
+    try {
+      const res = await getCardDetail(Number(id))
+      if (res.code === 0) {
+        setCard(res.data)
+      }
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -116,6 +197,9 @@ const CardDetail: React.FC = () => {
     4: { text: '已注销', color: 'default' },
   }
 
+  const isSecureIframeMode = card?.mode === 'secure_iframe'
+  const isTokenExpired = countdown === 0 && cardRevealed && isSecureIframeMode
+
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>
   }
@@ -145,21 +229,81 @@ const CardDetail: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
               <div>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>有效期</div>
-                <div style={{ fontSize: 18 }}>{cardRevealed ? card.expireDate : '**/**'}</div>
+                <div style={{ fontSize: 18 }}>{cardRevealed && !isSecureIframeMode ? card.expireDate : '**/**'}</div>
               </div>
               <div>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>CVV</div>
-                <div style={{ fontSize: 18 }}>{cardRevealed ? card.cvv : '***'}</div>
+                <div style={{ fontSize: 18 }}>{cardRevealed && !isSecureIframeMode ? card.cvv : '***'}</div>
               </div>
             </div>
             
-            {cardRevealed && (
+            {/* Legacy mode: show card number directly */}
+            {cardRevealed && !isSecureIframeMode && (
               <div style={{ background: 'rgba(255,255,255,0.2)', padding: 12, borderRadius: 8, marginBottom: 16 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>完整卡号</div>
                 <div style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
                   {card.cardNo}
                   <CopyOutlined style={{ cursor: 'pointer' }} onClick={() => copyToClipboard(card.cardNo)} />
                 </div>
+              </div>
+            )}
+
+            {/* Secure iFrame mode: show embedded iframe */}
+            {cardRevealed && isSecureIframeMode && (
+              <div style={{ marginBottom: 16 }}>
+                <Alert
+                  message={
+                    <Space>
+                      <SafetyOutlined />
+                      <span>卡面信息由 UQPay Secure iFrame 提供{countdown > 0 ? `，${countdown} 秒后失效` : '，已失效'}</span>
+                    </Space>
+                  }
+                  type={countdown > 0 ? 'info' : 'warning'}
+                  showIcon={false}
+                  style={{ 
+                    marginBottom: 12, 
+                    background: countdown > 0 ? 'rgba(255,255,255,0.15)' : 'rgba(255,200,0,0.2)',
+                    border: 'none',
+                    color: '#fff'
+                  }}
+                />
+
+                {iframeLoading && (
+                  <div style={{ textAlign: 'center', padding: '80px 0' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 12, opacity: 0.8 }}>正在获取安全卡面...</div>
+                  </div>
+                )}
+
+                {iframeUrl && countdown > 0 && (
+                  <iframe
+                    src={iframeUrl}
+                    style={{
+                      width: '100%',
+                      height: 360,
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      borderRadius: 8,
+                      background: '#fff',
+                    }}
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                    title="UQPay Secure Card View"
+                  />
+                )}
+
+                {isTokenExpired && (
+                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                    <LockOutlined style={{ fontSize: 32, marginBottom: 12, opacity: 0.6 }} />
+                    <div style={{ marginBottom: 16, opacity: 0.8 }}>卡面信息已过期</div>
+                    <Button
+                      type="primary"
+                      icon={<ReloadOutlined />}
+                      onClick={handleRefreshIframe}
+                      loading={iframeLoading}
+                    >
+                      重新获取卡面
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
             
@@ -170,7 +314,10 @@ const CardDetail: React.FC = () => {
               onClick={handleReveal}
               block
             >
-              {cardRevealed ? '隐藏卡片信息' : <><EyeOutlined /> 查看完整卡号</>}
+              {cardRevealed ? '隐藏卡片信息' : isSecureIframeMode
+                ? <><SafetyOutlined /> 安全查看卡面</>
+                : <><EyeOutlined /> 查看完整卡号</>
+              }
             </Button>
           </Card>
         </Col>
