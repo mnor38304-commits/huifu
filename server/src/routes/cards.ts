@@ -508,6 +508,11 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
     return res.json({ code: 400, message: '卡片状态异常', timestamp: Date.now() });
   }
 
+  // 2.5 UQPay / 渠道卡不允许本地充值（需走渠道真实资金接口）
+  if (card.channel_code && card.channel_code.toUpperCase() === 'UQPAY') {
+    return res.json({ code: 400, message: 'UQPay 卡充值接口待接入渠道真实资金接口，暂不可用', timestamp: Date.now() });
+  }
+
   // 3. 校验钱包余额
   const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
   if (!wallet) {
