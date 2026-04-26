@@ -553,7 +553,7 @@ export class UqPaySDK {
   async listCardProducts(): Promise<UqPayCardProduct[]> {
     const res = await this.request<{ data: any[] }>(
       'GET',
-      '/api/v1/issuing/products?page_size=100&page_number=1'
+      '/api/v1/issuing/products?page_size=10000&page_number=1'
     );
     const raw = res.data || [];
     return raw.map(normalizeCardProduct);
@@ -979,7 +979,7 @@ export class UqPaySDK {
   }>> {
     const res = await this.request<{ data: any[] }>(
       'GET',
-      '/api/v1/accounts?page_size=100&page_number=1'
+      '/api/v1/accounts?page_size=10000&page_number=1'
     );
     return (res.data || []).map((a: any) => ({
       account_id: a.account_id || a.id || '',
@@ -1160,8 +1160,8 @@ export class UqPaySDK {
     try {
       const token = await this.refreshToken();
       const [holders, products, accountsRaw] = await Promise.all([
-        this.request<{ data: UqPayCardholder[] }>('GET', '/api/v1/issuing/cardholders?page_size=1&page_number=1'),
-        this.request<{ data: any[] }>('GET', '/api/v1/issuing/products?page_size=1&page_number=1'),
+        this.request<{ data: UqPayCardholder[] }>('GET', '/api/v1/issuing/cardholders?page_size=100&page_number=1'),
+        this.request<{ data: any[] }>('GET', '/api/v1/issuing/products?page_size=100&page_number=1'),
         this.listAccounts(),
       ]);
 
