@@ -117,12 +117,13 @@ router.post('/notify', async (req, res) => {
         (event_id, event_type, source_id, payload_json, processed_status, created_at)
       VALUES (?, ?, ?, ?, 'PENDING', CURRENT_TIMESTAMP)
     `);
-    stmt.run([
+    // sql.js run() 使用展开参数，不是数组包裹
+    stmt.run(
       String(event_id),
       String(event_type || ''),
       String(source_id || ''),
       JSON.stringify(sanitizedPayload),
-    ]);
+    );
     stmt.free();
 
     database.run('COMMIT');
