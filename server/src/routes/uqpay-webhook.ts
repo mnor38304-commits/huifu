@@ -21,12 +21,16 @@ const router = Router();
 
 // 已知 UQPay Webhook 敏感字段列表（不写入日志/payload_json）
 const SENSITIVE_FIELDS = new Set([
+  // 卡号 / CVV / PAN
   'card_number', 'pan', 'cvv', 'cvv2', 'cvc',
   'expiry_month', 'expiry_year',
-  'password', 'secret', 'token',
-  'x-auth-token', 'authorization',
-  'api_key', 'apiSecret', 'api_secret',
-  'x-client-id', 'x-api-key',
+  // 认证凭据
+  'password', 'secret',
+  'token', 'authToken', 'accessToken', 'refreshToken',
+  'x-auth-token', 'x-access-token', 'authorization',
+  // API 密钥（多种命名格式）
+  'api_key', 'apiSecret', 'api_secret', 'apiKey',
+  'x-client-id', 'x-api-key', 'clientId', 'client_id',
 ]);
 
 /**

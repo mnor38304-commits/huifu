@@ -117,6 +117,40 @@ export interface UqPayTransfer {
   created_at: string;
 }
 
+/**
+ * UQPay 卡充值响应 — 标准化接口
+ *
+ * API: POST /api/v1/issuing/cards/{cardId}/recharge
+ * 文档: https://docs.uqpay.com
+ *
+ * 安全约束:
+ * - 不使用 card_number / PAN
+ * - 不使用 PAN Token 作为充值参数
+ * - 不保存 CVV
+ *
+ * 响应字段（标准化）：
+ *   card_id                 - 卡 ID
+ *   card_order_id           - 卡订单 ID
+ *   recharge_amount         - 充值金额
+ *   recharge_status         - 充值状态：PENDING / SUCCESS / FAILED
+ *   balance_after           - 充值后余额（卡账户层面）
+ *   card_available_balance  - 可用余额
+ *   recharge_time           - 充值时间
+ *   balance_id              - 余额账户 ID（可选，API 可能返回）
+ *   raw_json                - 原始响应
+ */
+export interface UqPayRechargeResponse {
+  card_id: string;
+  card_order_id?: string;
+  recharge_amount: number;
+  recharge_status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  balance_after?: number;
+  card_available_balance?: number;
+  recharge_time?: string;
+  balance_id?: string;
+  raw_json: any;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -760,6 +794,62 @@ export class UqPaySDK {
     return res.data || [];
   }
 
+  /**
+   * 为卡片充值（使用 issuing cards/{cardId}/recharge）
+   *
+   * API: POST /api/v1/issuing/cards/{cardId}/recharge
+   *
+   * 安全约束:
+   * - 不使用 card_number / PAN
+   * - 不使用 PAN Token 作为充值参数
+   * - 不保存 CVV
+   * - 不输出 token / clientId / apiKey
+   *
+   * @param cardId          卡片 UUID（来自 UQPay，非本地 cards.id）
+   * @param amount          充值金额
+   * @param idempotencyKey  幂等键（由调用方生成，防止重复充值）
+   * @param options.balanceId 可选，指定余额账户 ID（从 listAccounts() 获取 USD account_id）
+   *
+   * @returns UqPayRechargeResponse
+   *
+   * 注意：本轮 PR-2 仅实现 SDK 方法，不接入用户充值流程，不真实充值，不修改钱包/卡余额。
+   */
+  async rechargeCard(
+    cardId: string,
+    amount: number,
+    idempotencyKey: string,
+    options: { balanceId?: string } = {}
+  ): Promise<UqPayRechargeResponse> {
+    // 构建请求体（不使用 card_number / PAN）
+    const body: Record<string, any> = {
+      amount: amount,
+    };
+    // 如果提供了 balance_id（如从 listAccounts 获取的 USD account_id）则填入
+    if (options.balanceId) {
+      body.balance_id = options.balanceId;
+    }
+
+    // 调用 issuing recharge 接口，使用调用方提供的幂等键覆盖默认 UUID
+    const raw = await this.request<any>(
+      'POST',
+      `/api/v1/issuing/cards/${cardId}/recharge`,
+      body,
+      { 'x-idempotency-key': idempotencyKey }
+    );
+
+    return {
+      card_id: raw.card_id || raw.id || cardId,
+      card_order_id: raw.card_order_id || raw.order_id || '',
+      recharge_amount: Number(raw.recharge_amount ?? raw.amount ?? amount),
+      recharge_status: (raw.recharge_status || raw.status || 'PENDING') as 'PENDING' | 'SUCCESS' | 'FAILED',
+      balance_after: raw.balance_after != null ? Number(raw.balance_after) : undefined,
+      card_available_balance: raw.card_available_balance != null ? Number(raw.card_available_balance) : undefined,
+      recharge_time: raw.recharge_time || raw.created_at || '',
+      balance_id: raw.balance_id || options.balanceId || undefined,
+      raw_json: raw,
+    };
+  }
+
   // ── 钱包充值 (Wallet / Transfer) ─────────────────────────────────────────
 
   /**
@@ -865,14 +955,40 @@ export class UqPaySDK {
   }
 
   /**
-   * 获取 UQPay 账户列表（用于获取 platform account_id）
+   * 获取 UQPay 账户列表（用于获取 platform account_id / balance_id）
+   *
+   * API: GET /api/v1/accounts
+   *
+   * 返回字段:
+   *   account_id          - 账户 ID（即 balance_id，充值时传入 balance_id 参数）
+   *   name                - 账户名称
+   *   currency            - 币种（如 USD）
+   *   available_balance   - 可用余额
+   *   balance             - 总余额
+   *   status              - 账户状态（ENABLED / DISABLED 等）
+   *
+   * 安全：不输出 token / clientId / apiKey
    */
-  async listAccounts(): Promise<Array<{ account_id: string; name: string; currency: string }>> {
-    const res = await this.request<{ data: Array<{ account_id: string; name: string; currency: string }> }>(
+  async listAccounts(): Promise<Array<{
+    account_id: string;
+    name: string;
+    currency: string;
+    available_balance?: number;
+    balance?: number;
+    status?: string;
+  }>> {
+    const res = await this.request<{ data: any[] }>(
       'GET',
       '/api/v1/accounts?page_size=100&page_number=1'
     );
-    return res.data || [];
+    return (res.data || []).map((a: any) => ({
+      account_id: a.account_id || a.id || '',
+      name: a.name || '',
+      currency: a.currency || '',
+      available_balance: a.available_balance != null ? Number(a.available_balance) : undefined,
+      balance: a.balance != null ? Number(a.balance) : undefined,
+      status: a.status || undefined,
+    }));
   }
 
   // ── Secure iFrame / PAN Token ────────────────────────────────────────────
@@ -1016,29 +1132,65 @@ export class UqPaySDK {
 
   /**
    * 诊断接口: 检查 SDK 配置是否正确
+   *
+   * 安全：不输出 token / clientId / apiKey
+   *
+   * @returns 诊断结果，包含账户列表的 id / name / currency / status（不含密钥字段）
    */
   async diagnose(): Promise<{
     tokenOk: boolean;
     cardholderCount: number;
     cardProductCount: number;
-    accounts: number;
+    accounts: Array<{
+      account_id: string;
+      name: string;
+      currency: string;
+      available_balance?: number;
+      balance?: number;
+      status?: string;
+    }>;
+    usdAccount?: {
+      account_id: string;
+      name: string;
+      available_balance?: number;
+      balance?: number;
+    };
     error?: string;
   }> {
     try {
       const token = await this.refreshToken();
-      const [holders, products, accounts] = await Promise.all([
+      const [holders, products, accountsRaw] = await Promise.all([
         this.request<{ data: UqPayCardholder[] }>('GET', '/api/v1/issuing/cardholders?page_size=1&page_number=1'),
         this.request<{ data: any[] }>('GET', '/api/v1/issuing/products?page_size=1&page_number=1'),
-        this.request<{ data: any[] }>('GET', '/api/v1/accounts?page_size=1&page_number=1'),
+        this.listAccounts(),
       ]);
+
+      // 识别 USD 账户（用于充值时的 balance_id）
+      const usdAccount = accountsRaw.find(a =>
+        a.currency?.toUpperCase() === 'USD' &&
+        a.status?.toUpperCase() !== 'DISABLED'
+      );
+
       return {
         tokenOk: !!token,
         cardholderCount: holders.data?.length ?? 0,
         cardProductCount: products.data?.length ?? 0,
-        accounts: accounts.data?.length ?? 0,
+        accounts: accountsRaw,
+        usdAccount: usdAccount ? {
+          account_id: usdAccount.account_id,
+          name: usdAccount.name,
+          available_balance: usdAccount.available_balance,
+          balance: usdAccount.balance,
+        } : undefined,
       };
     } catch (err: any) {
-      return { tokenOk: false, cardholderCount: 0, cardProductCount: 0, accounts: 0, error: err.message };
+      return {
+        tokenOk: false,
+        cardholderCount: 0,
+        cardProductCount: 0,
+        accounts: [],
+        error: err?.message || String(err),
+      };
     }
   }
 }
