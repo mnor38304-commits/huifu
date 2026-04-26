@@ -226,6 +226,40 @@ export async function initDatabase(): Promise<Database> {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // ── UQPay 充值订单表 ─────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS uqpay_recharge_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_request_id TEXT NOT NULL UNIQUE,
+    card_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT DEFAULT 'USD',
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    -- PENDING / SUCCESS / FAILED / REFUNDED / CANCELLED
+    uqpay_response TEXT,
+    wallet_record_id TEXT,
+    card_txn_id TEXT,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (card_id) REFERENCES cards(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  // ── UQPay Webhook 事件表 ─────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS uqpay_webhook_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    event_type TEXT,
+    source_id TEXT,
+    payload_json TEXT,
+    processed_status TEXT DEFAULT 'PENDING',
+    -- PENDING / PROCESSING / SUCCESS / FAILED
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    processed_at DATETIME
+  )`);
+
   // ── 系统配置表 ───────────────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS system_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,6 +277,10 @@ export async function initDatabase(): Promise<Database> {
     db.run('CREATE INDEX IF NOT EXISTS idx_usdt_orders_user_id ON usdt_orders(user_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_wallets_user_id ON wallets(user_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_wallet_records_user_id ON wallet_records(user_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_recharge_card_id ON uqpay_recharge_orders(card_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_recharge_user_id ON uqpay_recharge_orders(user_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_webhook_event_id ON uqpay_webhook_events(event_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_webhook_type ON uqpay_webhook_events(event_type)');
   } catch (e) {}
 
   saveDatabase();
