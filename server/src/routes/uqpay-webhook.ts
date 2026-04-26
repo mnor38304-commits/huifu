@@ -107,45 +107,32 @@ router.post('/notify', async (req, res) => {
   // ── 安全过滤 payload ─────────────────────────────────────────
   const sanitizedPayload = sanitizePayload(payload);
 
-  // ── 写入数据库 ───────────────────────────────────────────────
-  const database = getDb();
+  // ── 写入数据库（直接调用 database.prepare().run()，与 uqpay.ts 模式完全一致） ──
   try {
-    database.run('BEGIN');
-
+    const database = getDb();
     const stmt = database.prepare(`
       INSERT INTO uqpay_webhook_events
-        (event_id, event_type, source_id, payload_json, processed_status, created_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        (event_id, event_type, source_id, payload_json, processed_status)
+      VALUES (?, ?, ?, ?, 'PENDING')
     `);
-    // 5个列 + 2个字面量 → stmt.run 传 5 个值（与 uqpay.ts 保持一致）
     stmt.run([
       String(event_id),
       String(event_type || ''),
       String(source_id || ''),
       JSON.stringify(sanitizedPayload),
-      'PENDING',  // processed_status（第5个占位符）
     ]);
     stmt.free();
-
-    database.run('COMMIT');
     saveDatabase();
   } catch (err: any) {
-    database.run('ROLLBACK');
-    // 唯一约束冲突 → 幂等返回成功
-    if (err.message?.includes('UNIQUE constraint failed') || err.message?.includes('UNIQUE constraint')) {
-      console.log(`[UQPay Webhook] 写入冲突（幂等）: event_id=${event_id}`);
-      return res.json({
-        code: 0,
-        message: 'SUCCESS',
-        timestamp: Date.now(),
-      });
+    // 幂等：UNIQUE 冲突时忽略并返回成功
+    const msg = err && (err.message || String(err));
+    if (msg && (msg.includes('UNIQUE') || msg.includes('constraint'))) {
+      console.log(`[UQPay Webhook] 幂等跳过: event_id=${event_id}`);
+      return res.json({ code: 0, message: 'SUCCESS', timestamp: Date.now() });
     }
-    console.error('[UQPay Webhook] 数据库写入失败:', err.message);
-    return res.json({
-      code: 500,
-      message: 'Failed to record event',
-      timestamp: Date.now(),
-    });
+    // 记录真实错误以便调试
+    console.error('[UQPay Webhook] 写入失败:', msg, 'event_id=' + event_id);
+    return res.json({ code: 500, message: 'Failed to record event', timestamp: Date.now() });
   }
 
   console.log(
