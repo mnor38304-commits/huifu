@@ -50,6 +50,12 @@ export interface Card {
   purpose?: string;
   created_at: string;
   updated_at: string;
+  // 以下字段通过 ALTER TABLE 动态添加，对应 index.ts 中的迁移
+  channel_code?: string;
+  external_id?: string;
+  uqpay_cardholder_id?: string;
+  card_order_id?: string;
+  balance_id?: string;
 }
 
 export interface Transaction {
