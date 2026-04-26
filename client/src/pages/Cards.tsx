@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert } from 'antd'
-import { PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip } from 'antd'
+import { PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, WalletOutlined, TransactionOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard, cancelCard } from '../services/api'
+import { getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard, cancelCard, topupCard } from '../services/api'
 
 const { Option } = Select
 
@@ -107,6 +107,55 @@ const Cards: React.FC = () => {
     }
   }
 
+  // ── 充值弹窗 state ──
+  const [topupModalVisible, setTopupModalVisible] = useState(false)
+  const [topupCardId, setTopupCardId] = useState<number | null>(null)
+  const [topupCardName, setTopupCardName] = useState('')
+  const [topupCardBalance, setTopupCardBalance] = useState(0)
+  const [topupLoading, setTopupLoading] = useState(false)
+  const [topupForm] = Form.useForm()
+
+  const openTopupModal = (record: any) => {
+    setTopupCardId(record.id)
+    setTopupCardName(record.card_name || record.card_no_masked)
+    setTopupCardBalance(record.balance || 0)
+    topupForm.resetFields()
+    topupForm.setFieldsValue({ amount: 100 })
+    setTopupModalVisible(true)
+  }
+
+  const handleTopup = async () => {
+    const values = await topupForm.validateFields()
+    if (!values.amount || values.amount <= 0) {
+      message.error('请输入有效金额')
+      return
+    }
+    setTopupLoading(true)
+    try {
+      const res = await topupCard(topupCardId!, values.amount)
+      if (res.code === 0) {
+        message.success(`充值成功！新余额: $${res.data.newBalance?.toFixed(2)}`)
+        setTopupModalVisible(false)
+        loadCards()
+      } else {
+        message.error(res.message)
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '充值失败')
+    } finally {
+      setTopupLoading(false)
+    }
+  }
+
+  const handleWithdraw = (record: any) => {
+    if (record.external_id) {
+      // UQPay 卡：暂不支持
+      message.info('UQPay 卡余额转出接口待接入，暂不可用')
+    } else {
+      message.info('余额转出功能待接入渠道接口后开放')
+    }
+  }
+
   const statusMap: Record<number, { text: string; color: string }> = {
     0: { text: '待激活', color: 'default' },
     1: { text: '正常', color: 'green' },
@@ -170,10 +219,34 @@ const Cards: React.FC = () => {
       title: '操作',
       key: 'action',
       render: (_: any, record: any) => (
-        <Space>
+        <Space size={4} wrap>
           <Button type="link" size="small" onClick={() => navigate(`/cards/${record.id}`)}>
             <EyeOutlined /> 详情
           </Button>
+          {record.status === 1 && (
+            <Button
+              type="link"
+              size="small"
+              icon={<WalletOutlined />}
+              style={{ color: '#1677ff' }}
+              onClick={() => openTopupModal(record)}
+            >
+              充值
+            </Button>
+          )}
+          {record.status === 1 && (
+            <Tooltip title="余额转出功能待接入渠道接口后开放">
+              <Button
+                type="link"
+                size="small"
+                icon={<TransactionOutlined />}
+                style={{ color: '#fa8c16' }}
+                onClick={() => handleWithdraw(record)}
+              >
+                余额转出
+              </Button>
+            </Tooltip>
+          )}
           {record.status === 1 && (
             <Button type="link" size="small" danger onClick={() => handleFreeze(record.id, true)}>
               <LockOutlined /> 冻结
@@ -274,6 +347,61 @@ const Cards: React.FC = () => {
             </Button>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* ── 充值弹窗 ── */}
+      <Modal
+        title={
+          <Space>
+            <WalletOutlined />
+            <span>卡片充值</span>
+          </Space>
+        }
+        open={topupModalVisible}
+        onCancel={() => setTopupModalVisible(false)}
+        onOk={handleTopup}
+        confirmLoading={topupLoading}
+        okText="确认充值"
+        cancelText="取消"
+        width={420}
+      >
+        <Form form={topupForm} layout="vertical">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ color: '#666', fontSize: 13 }}>充值卡片</div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginTop: 4 }}>{topupCardName}</div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ color: '#666', fontSize: 13 }}>当前余额</div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginTop: 4, color: '#1677ff' }}>
+              ${topupCardBalance.toFixed(2)}
+            </div>
+          </div>
+          <Form.Item
+            name="amount"
+            label="充值金额 (USD)"
+            rules={[
+              { required: true, message: '请输入充值金额' },
+              { type: 'number', min: 0.01, message: '金额必须大于 0' },
+            ]}
+          >
+            <InputNumber
+              placeholder="请输入充值金额"
+              min={0.01}
+              max={100000}
+              step={10}
+              style={{ width: '100%' }}
+              size="large"
+              prefix="$"
+              autoFocus
+            />
+          </Form.Item>
+        </Form>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: 8 }}
+          message="充值将从钱包余额中扣除，请确保钱包余额充足。"
+        />
       </Modal>
     </div>
   )
