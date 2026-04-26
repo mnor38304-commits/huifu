@@ -33,7 +33,7 @@ const SENSITIVE_FIELDS = new Set([
  * 深度过滤 payload 中敏感字段，返回安全副本
  */
 function sanitizePayload(obj: any, depth = 0): any {
-  if (!obj || typeof obj !== 'object') return obj;
+  if (obj === undefined || obj === null) return null; // JSON.stringify null → 'null' 是合法字符串
   if (depth > 10) return '[MAX_DEPTH]'; // 防止嵌套过深
 
   if (Array.isArray(obj)) {
