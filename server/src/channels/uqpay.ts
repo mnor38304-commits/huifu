@@ -808,7 +808,7 @@ export class UqPaySDK {
    * @param cardId          卡片 UUID（来自 UQPay，非本地 cards.id）
    * @param amount          充值金额
    * @param idempotencyKey  幂等键（由调用方生成，防止重复充值）
-   * @param options.balanceId 可选，指定余额账户 ID（从 listAccounts() 获取 USD account_id）
+   * @param options.balanceId 可选，指定余额账户 ID（从 listIssuingBalances() 获取 USD balance_id）
    *
    * @returns UqPayRechargeResponse
    *
@@ -824,7 +824,7 @@ export class UqPaySDK {
     const body: Record<string, any> = {
       amount: amount,
     };
-    // 如果提供了 balance_id（如从 listAccounts 获取的 USD account_id）则填入
+    // 如果提供了 balance_id（如从 listIssuingBalances 获取的 USD balance_id）则填入
     if (options.balanceId) {
       body.balance_id = options.balanceId;
     }
@@ -959,15 +959,12 @@ export class UqPaySDK {
    *
    * API: GET /api/v1/accounts
    *
-   * 返回字段:
-   *   account_id          - 账户 ID（即 balance_id，充值时传入 balance_id 参数）
-   *   name                - 账户名称
-   *   currency            - 币种（如 USD）
-   *   available_balance   - 可用余额
-   *   balance             - 总余额
-   *   status              - 账户状态（ENABLED / DISABLED 等）
+   * ⚠️ 已知问题：此端点对 Issuing 卡场景返回空数组。
+   * 充值资金来源应使用 listIssuingBalances() 代替。
    *
    * 安全：不输出 token / clientId / apiKey
+   *
+   * @deprecated 使用 listIssuingBalances() 代替，该接口对 Issuing 卡场景返回空数组
    */
   async listAccounts(): Promise<Array<{
     account_id: string;
@@ -988,6 +985,53 @@ export class UqPaySDK {
       available_balance: a.available_balance != null ? Number(a.available_balance) : undefined,
       balance: a.balance != null ? Number(a.balance) : undefined,
       status: a.status || undefined,
+    }));
+  }
+
+  /**
+   * 获取 UQPay Issuing 余额列表（充值资金来源）
+   *
+   * API: GET /api/v1/issuing/balances?page_number=1&page_size=N
+   *
+   * 这是 Issuing 卡充值场景的正确资金来源接口。
+   * /api/v1/accounts 对 Issuing 卡场景返回空数组，
+   * /api/v1/balances 返回多币种但 available_balance 全为 0，
+   * 只有 /api/v1/issuing/balances 返回真实的 Issuing 级别资金池余额。
+   *
+   * 返回字段标准化：
+   *   balance_id          - Issuing 余额 ID（UQPay 实际返回 balance_id，兼容 account_id / id）
+   *   currency            - 币种（如 USD）
+   *   available_balance   - 可用余额
+   *   balance             - 总余额
+   *   balance_status      - 余额状态（ACTIVE / DISABLED 等）
+   *   raw_json            - 原始响应（用于调试，不含密钥）
+   *
+   * 安全：不输出 token / clientId / apiKey
+   */
+  async listIssuingBalances(params?: {
+    pageNumber?: number;
+    pageSize?: number;
+  }): Promise<Array<{
+    balance_id: string;
+    currency: string;
+    available_balance: number;
+    balance: number;
+    balance_status: string;
+    raw_json: any;
+  }>> {
+    const pageNumber = params?.pageNumber ?? 1;
+    const pageSize = params?.pageSize ?? 100;
+    const res = await this.request<{ data: any[] }>(
+      'GET',
+      `/api/v1/issuing/balances?page_number=${pageNumber}&page_size=${pageSize}`
+    );
+    return (res.data || []).map((b: any) => ({
+      balance_id: String(b.balance_id || b.account_id || b.id || ''),
+      currency: String(b.currency || ''),
+      available_balance: Number(b.available_balance ?? 0),
+      balance: Number(b.balance ?? 0),
+      balance_status: String(b.balance_status || b.status || 'UNKNOWN'),
+      raw_json: b,
     }));
   }
 
@@ -1141,46 +1185,63 @@ export class UqPaySDK {
     tokenOk: boolean;
     cardholderCount: number;
     cardProductCount: number;
-    accounts: Array<{
-      account_id: string;
-      name: string;
+    /** /api/v1/accounts 返回数量（通常为 0，Issuing 场景不适用） */
+    accountsCount: number;
+    /** /api/v1/balances 返回数量（非 issuing，available_balance 通常为 0） */
+    balancesCount: number;
+    /** /api/v1/issuing/balances 返回数量（✅ 充值资金来源） */
+    issuingBalances: Array<{
+      balance_id: string;
       currency: string;
-      available_balance?: number;
-      balance?: number;
-      status?: string;
+      available_balance: number;
+      balance: number;
+      balance_status: string;
     }>;
-    usdAccount?: {
-      account_id: string;
-      name: string;
-      available_balance?: number;
-      balance?: number;
+    /** USD issuing balance（如果有） */
+    usdIssuingBalance?: {
+      balance_id: string;
+      available_balance: number;
+      balance: number;
+      balance_status: string;
     };
     error?: string;
   }> {
     try {
       const token = await this.refreshToken();
-      const [holders, products, accountsRaw] = await Promise.all([
+      const [holders, products, accountsRes, balancesRes, issuingBalancesRaw] = await Promise.all([
         this.request<{ data: UqPayCardholder[] }>('GET', '/api/v1/issuing/cardholders?page_size=100&page_number=1'),
         this.request<{ data: any[] }>('GET', '/api/v1/issuing/products?page_size=100&page_number=1'),
-        this.listAccounts(),
+        this.request<{ data: any[] }>('GET', '/api/v1/accounts?page_size=10000&page_number=1').catch(() => ({ data: [] as any[] })),
+        this.request<{ data: any[] }>('GET', '/api/v1/balances?page_size=100&page_number=1').catch(() => ({ data: [] as any[] })),
+        this.listIssuingBalances({ pageNumber: 1, pageSize: 100 }),
       ]);
 
-      // 识别 USD 账户（用于充值时的 balance_id）
-      const usdAccount = accountsRaw.find(a =>
-        a.currency?.toUpperCase() === 'USD' &&
-        a.status?.toUpperCase() !== 'DISABLED'
+      const issuingBalances = issuingBalancesRaw.map(b => ({
+        balance_id: b.balance_id,
+        currency: b.currency,
+        available_balance: b.available_balance,
+        balance: b.balance,
+        balance_status: b.balance_status,
+      }));
+
+      // 识别 USD issuing balance（充值资金来源）
+      const usdIssuingBalance = issuingBalancesRaw.find(b =>
+        b.currency?.toUpperCase() === 'USD' &&
+        b.balance_status?.toUpperCase() !== 'DISABLED'
       );
 
       return {
         tokenOk: !!token,
         cardholderCount: holders.data?.length ?? 0,
         cardProductCount: products.data?.length ?? 0,
-        accounts: accountsRaw,
-        usdAccount: usdAccount ? {
-          account_id: usdAccount.account_id,
-          name: usdAccount.name,
-          available_balance: usdAccount.available_balance,
-          balance: usdAccount.balance,
+        accountsCount: accountsRes.data?.length ?? 0,
+        balancesCount: balancesRes.data?.length ?? 0,
+        issuingBalances,
+        usdIssuingBalance: usdIssuingBalance ? {
+          balance_id: usdIssuingBalance.balance_id,
+          available_balance: usdIssuingBalance.available_balance,
+          balance: usdIssuingBalance.balance,
+          balance_status: usdIssuingBalance.balance_status,
         } : undefined,
       };
     } catch (err: any) {
@@ -1188,7 +1249,9 @@ export class UqPaySDK {
         tokenOk: false,
         cardholderCount: 0,
         cardProductCount: 0,
-        accounts: [],
+        accountsCount: 0,
+        balancesCount: 0,
+        issuingBalances: [],
         error: err?.message || String(err),
       };
     }
