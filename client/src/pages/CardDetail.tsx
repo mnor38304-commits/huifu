@@ -6,6 +6,12 @@ import { getCardDetail, revealCard, getPanToken, topupCard, freezeCard, unfreeze
 
 const IFRAME_COUNTDOWN_SECONDS = 60
 
+/** Remove channel names from card name for user-facing display */
+const stripChannelName = (name: string): string => {
+  return name
+    .replace(/\b(UQPay|DogPay|CoinPal)\s+/gi, '')
+}
+
 const CardDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -216,35 +222,47 @@ const CardDetail: React.FC = () => {
       <Row gutter={24}>
         <Col span={12}>
           <Card 
-            title={card.card_name}
+            title={stripChannelName(card.card_name || '')}
             extra={<Tag color={statusMap[card.status]?.color}>{statusMap[card.status]?.text}</Tag>}
             style={{ 
-              background: card.status === 1 ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#f5f5f5',
-              color: card.status === 1 ? '#fff' : '#666'
+              background: card.status === 1 
+                ? 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)' 
+                : '#f0f2f5',
+              color: card.status === 1 ? '#fff' : '#333',
+              border: card.status === 1 ? 'none' : '1px solid #e8e8e8',
+              borderRadius: 16,
+              minHeight: 260,
             }}
+            headStyle={{ 
+              color: card.status === 1 ? 'rgba(255,255,255,0.95)' : '#333',
+              borderBottom: card.status === 1 ? '1px solid rgba(255,255,255,0.15)' : '1px solid #f0f0f0',
+              fontSize: 18,
+              fontWeight: 600,
+            }}
+            bodyStyle={{ padding: '24px 24px 20px' }}
           >
-            <div style={{ fontSize: 28, fontWeight: 'bold', marginBottom: 24, letterSpacing: 2 }}>
+            <div style={{ fontSize: 28, fontWeight: 'bold', marginBottom: 24, letterSpacing: 3, fontFamily: '"Courier New", Consolas, monospace', textShadow: card.status === 1 ? '0 1px 4px rgba(0,0,0,0.3)' : 'none' }}>
               {card.card_no_masked}
             </div>
             
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 12, opacity: 0.7 }}>有效期</div>
-                <div style={{ fontSize: 18 }}>{cardRevealed && !isSecureIframeMode ? card.expireDate : '**/**'}</div>
+                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>有效期</div>
+                <div style={{ fontSize: 18, fontWeight: 500 }}>{cardRevealed && !isSecureIframeMode ? card.expireDate : '**/**'}</div>
               </div>
               <div>
-                <div style={{ fontSize: 12, opacity: 0.7 }}>CVV</div>
-                <div style={{ fontSize: 18 }}>{cardRevealed && !isSecureIframeMode ? card.cvv : '***'}</div>
+                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>CVV</div>
+                <div style={{ fontSize: 18, fontWeight: 500 }}>{cardRevealed && !isSecureIframeMode ? card.cvv : '***'}</div>
               </div>
             </div>
             
             {/* Legacy mode: show card number directly */}
             {cardRevealed && !isSecureIframeMode && (
-              <div style={{ background: 'rgba(255,255,255,0.2)', padding: 12, borderRadius: 8, marginBottom: 16 }}>
-                <div style={{ fontSize: 12, opacity: 0.7 }}>完整卡号</div>
-                <div style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(4px)', padding: 12, borderRadius: 10, marginBottom: 16 }}>
+                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>完整卡号</div>
+                <div style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500 }}>
                   {card.cardNo}
-                  <CopyOutlined style={{ cursor: 'pointer' }} onClick={() => copyToClipboard(card.cardNo)} />
+                  <CopyOutlined style={{ cursor: 'pointer', opacity: 0.8 }} onClick={() => copyToClipboard(card.cardNo)} />
                 </div>
               </div>
             )}
@@ -256,23 +274,24 @@ const CardDetail: React.FC = () => {
                   message={
                     <Space>
                       <SafetyOutlined />
-                      <span>卡面信息由 UQPay Secure iFrame 提供{countdown > 0 ? `，${countdown} 秒后失效` : '，已失效'}</span>
+                      <span>完整卡信息通过安全卡面查看，{countdown > 0 ? `${countdown} 秒后自动失效` : '已失效'}。为保护卡片安全，请勿截图或转发。</span>
                     </Space>
                   }
                   type={countdown > 0 ? 'info' : 'warning'}
                   showIcon={false}
                   style={{ 
                     marginBottom: 12, 
-                    background: countdown > 0 ? 'rgba(255,255,255,0.15)' : 'rgba(255,200,0,0.2)',
-                    border: 'none',
-                    color: '#fff'
+                    background: countdown > 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,200,0,0.15)',
+                    border: countdown > 0 ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(255,200,0,0.4)',
+                    color: countdown > 0 ? 'rgba(255,255,255,0.9)' : '#b37400',
+                    borderRadius: 10,
                   }}
                 />
 
                 {iframeLoading && (
                   <div style={{ textAlign: 'center', padding: '80px 0' }}>
                     <Spin size="large" />
-                    <div style={{ marginTop: 12, opacity: 0.8 }}>正在获取安全卡面...</div>
+                    <div style={{ marginTop: 12, opacity: 0.85 }}>正在获取安全卡面...</div>
                   </div>
                 )}
 
@@ -287,14 +306,14 @@ const CardDetail: React.FC = () => {
                       background: '#fff',
                     }}
                     sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-                    title="UQPay Secure Card View"
+                    title="Secure Card View"
                   />
                 )}
 
                 {isTokenExpired && (
                   <div style={{ textAlign: 'center', padding: '60px 0' }}>
-                    <LockOutlined style={{ fontSize: 32, marginBottom: 12, opacity: 0.6 }} />
-                    <div style={{ marginBottom: 16, opacity: 0.8 }}>卡面信息已过期</div>
+                    <LockOutlined style={{ fontSize: 32, marginBottom: 12, opacity: 0.7 }} />
+                    <div style={{ marginBottom: 16, opacity: 0.85 }}>卡面信息已过期</div>
                     <Button
                       type="primary"
                       icon={<ReloadOutlined />}
