@@ -233,8 +233,8 @@ export async function markRechargeSuccess(
       result.order_status,
       result.card_order_id || '',
       JSON.stringify(result.raw_json).slice(0, 4000), // 限制存储大小，脱敏
-      result.balance_after,
-      result.card_available_balance,
+      result.balance_after ?? null,
+      result.card_available_balance ?? null,
       orderId,
     ]
   );
