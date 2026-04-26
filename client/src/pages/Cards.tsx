@@ -116,6 +116,11 @@ const Cards: React.FC = () => {
   const [topupForm] = Form.useForm()
 
   const openTopupModal = (record: any) => {
+    // UQPay 卡：充值需走渠道真实资金接口，本地接口不可用
+    if (record.external_id) {
+      message.info('UQPay 卡充值接口待接入渠道真实资金接口，暂不可用')
+      return
+    }
     setTopupCardId(record.id)
     setTopupCardName(record.card_name || record.card_no_masked)
     setTopupCardBalance(record.balance || 0)
@@ -125,6 +130,7 @@ const Cards: React.FC = () => {
   }
 
   const handleTopup = async () => {
+    if (!topupCardId) return
     const values = await topupForm.validateFields()
     if (!values.amount || values.amount <= 0) {
       message.error('请输入有效金额')
@@ -132,7 +138,7 @@ const Cards: React.FC = () => {
     }
     setTopupLoading(true)
     try {
-      const res = await topupCard(topupCardId!, values.amount)
+      const res = await topupCard(topupCardId, values.amount)
       if (res.code === 0) {
         message.success(`充值成功！新余额: $${res.data.newBalance?.toFixed(2)}`)
         setTopupModalVisible(false)
