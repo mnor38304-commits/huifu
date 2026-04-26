@@ -34,8 +34,9 @@ const CardDetail: React.FC = () => {
 
   // Cleanup on unmount
   useEffect(() => {
+    loadCardDetail()
     return () => clearIframe()
-  }, [clearIframe])
+  }, [id])
 
   const startCountdown = useCallback((seconds: number) => {
     setCountdown(seconds)
