@@ -114,6 +114,15 @@ async function start() {
   try { db.prepare('ALTER TABLE cards ADD COLUMN card_order_id VARCHAR(100)').run(); } catch (_) {}
   try { db.prepare('ALTER TABLE cards ADD COLUMN balance_id VARCHAR(100)').run(); } catch (_) {}
 
+  // ── UQPay 充值订单表迁移（PR-3）────────────────────────────
+  try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN card_order_id TEXT").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN order_status TEXT DEFAULT 'PENDING'").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN balance_after REAL").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN card_available_balance REAL").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN completed_at DATETIME").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN refunded_at DATETIME").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN uqpay_card_id TEXT").run(); } catch (_) {}
+
   // 初始化默认管理员账号
   const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
   if (adminCount === 0) {

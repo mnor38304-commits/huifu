@@ -16,6 +16,11 @@
 
 import { Router } from 'express';
 import db, { getDb, saveDatabase } from '../db';
+import {
+  handleWebhookRechargeSucceeded,
+  handleWebhookRechargeFailed,
+  handleWebhookIssuingFee,
+} from '../services/uqpay-recharge';
 
 const router = Router();
 
@@ -143,12 +148,43 @@ router.post('/notify', async (req, res) => {
     `[UQPay Webhook] 事件记录: event_id=${event_id} event_type=${event_type} source_id=${source_id}`
   );
 
-  // TODO(PR-4): 事件处理调度
-  //   - 根据 event_type 分发到对应处理器
-  //   - card.recharge  → 充值成功：更新 cards.balance + uqpay_recharge_orders
-  //   - card.withdraw  → 提现回调：更新本地卡余额
-  //   - card.status.*  → 卡状态变更同步
-  //   - payment.captured → 消费扣款同步
+  // ── 事件处理调度 ──────────────────────────────────────────────
+  const eventType = String(event_type || '');
+
+  try {
+    if (eventType === 'card.recharge.succeeded') {
+      handleWebhookRechargeSucceeded(payload || {});
+      // 标记为已处理
+      const database = getDb();
+      database.run(
+        "UPDATE uqpay_webhook_events SET processed_status = 'SUCCESS', processed_at = CURRENT_TIMESTAMP WHERE event_id = ?",
+        [String(event_id)]
+      );
+      saveDatabase();
+    } else if (eventType === 'card.recharge.failed') {
+      handleWebhookRechargeFailed(payload || {});
+      const database = getDb();
+      database.run(
+        "UPDATE uqpay_webhook_events SET processed_status = 'SUCCESS', processed_at = CURRENT_TIMESTAMP WHERE event_id = ?",
+        [String(event_id)]
+      );
+      saveDatabase();
+    } else if (eventType === 'issuing.fee.card') {
+      handleWebhookIssuingFee(payload || {});
+      const database = getDb();
+      database.run(
+        "UPDATE uqpay_webhook_events SET processed_status = 'SUCCESS', processed_at = CURRENT_TIMESTAMP WHERE event_id = ?",
+        [String(event_id)]
+      );
+      saveDatabase();
+    } else {
+      // 其他事件类型：记录但不处理
+      console.log(`[UQPay Webhook] 事件类型 ${eventType} 暂不处理`);
+    }
+  } catch (err: any) {
+    console.error(`[UQPay Webhook] 事件处理失败: event_type=${eventType}`, err.message);
+    // 不影响返回 200 给 UQPay（避免重复推送）
+  }
 
   return res.json({
     code: 0,

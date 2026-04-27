@@ -11,7 +11,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
-    "diagnose:uqpay": "tsx src/scripts/diagnose-uqpay.ts"
+    "diagnose:uqpay": "tsx src/scripts/diagnose-uqpay.ts",
+"reconcile:uqpay-recharges": "tsx src/scripts/reconcile-recharges.ts"
   },
   "dependencies": {
     "axios": "^1.6.7",
