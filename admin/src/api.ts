@@ -101,5 +101,6 @@ export const getWalletDetail = (userId: number) => BASE.get(`/wallet/${userId}`)
 export const adjustWalletBalance = (userId: number, amount: number, type: 'increase' | 'decrease', reason: string) =>
   BASE.post('/wallet/adjust', { userId, amount, type, reason })
 export const getWalletRecords = (userId: number, p?: any) => BASE.get(`/wallet/records/${userId}`, { params: p })
+export const getWalletConversions = (userId: number, p?: any) => BASE.get(`/wallet/conversions/${userId}`, { params: p })
 
 export default BASE

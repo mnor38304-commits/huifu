@@ -269,6 +269,24 @@ export async function initDatabase(): Promise<Database> {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // ── 钱包 USDT→USD 兑换记录表 ─────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS wallet_conversions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    amount_usdt REAL NOT NULL,         -- USDT 扣减额
+    amount_usd REAL NOT NULL,          -- USD 增加额
+    rate REAL NOT NULL DEFAULT 1.0,     -- 兑换汇率
+    balance_usdt_before REAL NOT NULL,  -- USDT 变动前余额
+    balance_usdt_after REAL NOT NULL,   -- USDT 变动后余额
+    balance_usd_before REAL NOT NULL,   -- USD 变动前余额
+    balance_usd_after REAL NOT NULL,    -- USD 变动后余额
+    idempotency_key VARCHAR(64) UNIQUE, -- 幂等键
+    remark VARCHAR(200),
+    status VARCHAR(20) DEFAULT 'COMPLETED',  -- COMPLETED / FAILED
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
   try {
     db.run('CREATE INDEX IF NOT EXISTS idx_users_user_no ON users(user_no)');
     db.run('CREATE INDEX IF NOT EXISTS idx_cards_user_id ON cards(user_id)');
@@ -281,6 +299,8 @@ export async function initDatabase(): Promise<Database> {
     db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_recharge_user_id ON uqpay_recharge_orders(user_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_webhook_event_id ON uqpay_webhook_events(event_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_webhook_type ON uqpay_webhook_events(event_type)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_wallet_conversions_user_id ON wallet_conversions(user_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_wallet_conversions_key ON wallet_conversions(idempotency_key)');
   } catch (e) {}
 
   saveDatabase();
