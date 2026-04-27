@@ -16,6 +16,13 @@
 
 import { Router } from 'express';
 import db, { getDb, saveDatabase } from '../db';
+import {
+  handleWebhookRechargeSucceeded,
+  handleWebhookRechargeFailed,
+  handleWebhookIssuingFee,
+  extractWebhookPayload,
+  WebhookProcessResult,
+} from '../services/uqpay-recharge';
 
 const router = Router();
 
@@ -143,12 +150,50 @@ router.post('/notify', async (req, res) => {
     `[UQPay Webhook] 事件记录: event_id=${event_id} event_type=${event_type} source_id=${source_id}`
   );
 
-  // TODO(PR-4): 事件处理调度
-  //   - 根据 event_type 分发到对应处理器
-  //   - card.recharge  → 充值成功：更新 cards.balance + uqpay_recharge_orders
-  //   - card.withdraw  → 提现回调：更新本地卡余额
-  //   - card.status.*  → 卡状态变更同步
-  //   - payment.captured → 消费扣款同步
+  // ── 事件处理调度 ──────────────────────────────────────────────
+  const eventType = String(event_type || '');
+
+  // 从 body 的多位置提取字段（兼容 payload=null / 非标准 payload）
+  const enrichedPayload = extractWebhookPayload(req.body);
+
+  /** 更新 uqpay_webhook_events 的处理状态 */
+  function updateEventStatus(status: string, errorMsg?: string): void {
+    const database = getDb();
+    try {
+      database.run(
+        `UPDATE uqpay_webhook_events
+         SET processed_status = ?, error_message = ?, processed_at = CURRENT_TIMESTAMP
+         WHERE event_id = ?`,
+        [status, errorMsg || null, String(event_id)]
+      );
+      saveDatabase();
+    } catch (e: any) {
+      console.error('[UQPay Webhook] 更新事件状态失败:', e.message);
+    }
+  }
+
+  try {
+    let result: WebhookProcessResult;
+
+    if (eventType === 'card.recharge.succeeded') {
+      result = handleWebhookRechargeSucceeded(enrichedPayload);
+      updateEventStatus(result.status, result.message);
+    } else if (eventType === 'card.recharge.failed') {
+      result = handleWebhookRechargeFailed(enrichedPayload);
+      updateEventStatus(result.status, result.message);
+    } else if (eventType === 'issuing.fee.card') {
+      result = handleWebhookIssuingFee(enrichedPayload);
+      updateEventStatus(result.status, result.message);
+    } else {
+      // 未知事件类型 → IGNORED
+      updateEventStatus('IGNORED', `unhandled event type: ${eventType}`);
+      console.log(`[UQPay Webhook] 事件类型 ${eventType} 暂不处理`);
+    }
+  } catch (err: any) {
+    console.error(`[UQPay Webhook] 事件处理失败: event_type=${eventType}`, err.message);
+    updateEventStatus('FAILED', `handler error: ${(err.message || String(err)).slice(0, 300)}`);
+    // 不影响返回 200 给 UQPay（避免重复推送）
+  }
 
   return res.json({
     code: 0,
