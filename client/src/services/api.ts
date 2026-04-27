@@ -101,4 +101,11 @@ export const createC2COrder = (data: any) => api.post('/wallet/deposit/c2c', dat
 export const getWalletRecords = (params: any) => api.get('/wallet/records', { params })
 export const checkDepositStatus = (orderNo: string) => api.get(`/wallet/deposit/${orderNo}/status`)
 
+// ── Wallet USDT→USD Conversion ────────────────────────────────────────
+export const createWalletConvert = (data: any, idempotencyKey?: string) =>
+  api.post('/wallet/convert/usdt-to-usd', data, {
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  })
+export const getConversionRecords = (params: any) => api.get('/wallet/convert/records', { params })
+
 export default api
