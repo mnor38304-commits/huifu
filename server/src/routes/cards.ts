@@ -519,6 +519,17 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
 
   // 3. UQPay 卡走真实充值流程
   if (card.channel_code && card.channel_code.toUpperCase() === 'UQPAY') {
+    // -- double guard: env var switch + user allowlist --
+    const enableUqpayRealRecharge = process.env.ENABLE_UQPAY_REAL_RECHARGE;
+    if (enableUqpayRealRecharge !== 'true') {
+      return res.json({ code: 400, message: 'UQPay 真实充值暂未开放', timestamp: Date.now() });
+    }
+    const whitelistStr = process.env.UQPAY_RECHARGE_TEST_USER_IDS || '';
+    const whitelist = whitelistStr.split(',').map(s => s.trim()).filter(Boolean).map(Number);
+    if (!whitelist.includes(userId)) {
+      return res.json({ code: 403, message: 'UQPay 真实充值仅限测试用户', timestamp: Date.now() });
+    }
+    // -----------------------------------------------------------------
     try {
       // 3a. 校验
       const validation = validateTopup(card.id, userId, numAmount);
