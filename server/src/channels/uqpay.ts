@@ -121,32 +121,46 @@ export interface UqPayTransfer {
  * UQPay 卡充值响应 — 标准化接口
  *
  * API: POST /api/v1/issuing/cards/{cardId}/recharge
- * 文档: https://docs.uqpay.com
+ * 文档: https://docs.uqpay.com/reference/card-recharge
+ * Go SDK 类型: CardOrder (cards.go)
  *
  * 安全约束:
  * - 不使用 card_number / PAN
  * - 不使用 PAN Token 作为充值参数
  * - 不保存 CVV
  *
- * 响应字段（标准化）：
+ * 响应字段（标准化，对齐 Go SDK CardOrder）：
  *   card_id                 - 卡 ID
- *   card_order_id           - 卡订单 ID
- *   recharge_amount         - 充值金额
- *   recharge_status         - 充值状态：PENDING / SUCCESS / FAILED
+ *   card_order_id           - 卡订单 ID（UQPay 充值订单号）
+ *   order_type              - 订单类型（RECHARGE）
+ *   amount                  - 充值金额
+ *   card_currency           - 币种（如 USD）
+ *   order_status            - 充值状态：PENDING / SUCCESS / FAILED
+ *   create_time             - 创建时间
+ *   update_time             - 更新时间
+ *   complete_time           - 完成时间
  *   balance_after           - 充值后余额（卡账户层面）
  *   card_available_balance  - 可用余额
- *   recharge_time           - 充值时间
  *   balance_id              - 余额账户 ID（可选，API 可能返回）
- *   raw_json                - 原始响应
+ *   raw_json                - 原始响应（脱敏，不含 PAN/CVV/token）
+ *
+ * 兼容旧字段映射：
+ *   recharge_amount  → amount
+ *   recharge_status  → order_status
+ *   recharge_time    → create_time / complete_time
  */
 export interface UqPayRechargeResponse {
   card_id: string;
   card_order_id?: string;
-  recharge_amount: number;
-  recharge_status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  order_type?: string;
+  amount: number;
+  card_currency?: string;
+  order_status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  create_time?: string;
+  update_time?: string;
+  complete_time?: string;
   balance_after?: number;
   card_available_balance?: number;
-  recharge_time?: string;
   balance_id?: string;
   raw_json: any;
 }
@@ -812,7 +826,7 @@ export class UqPaySDK {
    *
    * @returns UqPayRechargeResponse
    *
-   * 注意：本轮 PR-2 仅实现 SDK 方法，不接入用户充值流程，不真实充值，不修改钱包/卡余额。
+   * 注意：SDK 方法本身不含业务逻辑，事务/钱包操作由上层 service 处理。
    */
   async rechargeCard(
     cardId: string,
@@ -837,14 +851,22 @@ export class UqPaySDK {
       { 'x-idempotency-key': idempotencyKey }
     );
 
+    // 标准化响应（对齐 Go SDK CardOrder 字段）
+    const cardOrderId = raw.card_order_id || raw.order_id || '';
+    const orderStatus = (raw.order_status || raw.status || 'PENDING').toUpperCase();
     return {
       card_id: raw.card_id || raw.id || cardId,
-      card_order_id: raw.card_order_id || raw.order_id || '',
-      recharge_amount: Number(raw.recharge_amount ?? raw.amount ?? amount),
-      recharge_status: (raw.recharge_status || raw.status || 'PENDING') as 'PENDING' | 'SUCCESS' | 'FAILED',
+      card_order_id: cardOrderId,
+      order_type: raw.order_type || 'RECHARGE',
+      amount: Number(raw.amount ?? amount),
+      card_currency: raw.card_currency || raw.currency || 'USD',
+      order_status: (orderStatus === 'SUCCESS' || orderStatus === 'FAILED' || orderStatus === 'PENDING'
+        ? orderStatus : 'PENDING') as 'PENDING' | 'SUCCESS' | 'FAILED',
+      create_time: raw.create_time || raw.created_at || '',
+      update_time: raw.update_time || raw.updated_at || '',
+      complete_time: raw.complete_time || (orderStatus === 'SUCCESS' ? (raw.update_time || '') : ''),
       balance_after: raw.balance_after != null ? Number(raw.balance_after) : undefined,
       card_available_balance: raw.card_available_balance != null ? Number(raw.card_available_balance) : undefined,
-      recharge_time: raw.recharge_time || raw.created_at || '',
       balance_id: raw.balance_id || options.balanceId || undefined,
       raw_json: raw,
     };
