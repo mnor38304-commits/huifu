@@ -381,7 +381,13 @@ const CardDetail: React.FC = () => {
               <Button 
                 type="primary" 
                 icon={<WalletOutlined />} 
-                onClick={() => setTopupModalVisible(true)}
+                onClick={() => {
+                  if (card.external_id) {
+                    message.info('该卡暂不支持充值')
+                    return
+                  }
+                  setTopupModalVisible(true)
+                }}
                 disabled={card.status !== 1}
                 block
               >
