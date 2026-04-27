@@ -490,3 +490,297 @@ export function handleWebhookIssuingFee(payload: any): void {
     'fee_type:', payload.fee_type
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 充值订单主动补偿（Reconcile）
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * 充值订单补偿/对账
+ *
+ * 用于主动查询 PENDING / UNKNOWN 订单的最终状态。
+ * 由于 UQPay 没有独立的订单查询接口，采用以下策略：
+ *
+ * 1. 优先调用 getCard(card.external_id) 获取 card_available_balance。
+ * 2. 比较充值后余额 = 充值前余额（本地 cards.balance）+ 订单金额。
+ * 3. 如果 balance >= expected -> 确认成功。
+ * 4. 如果卡不存在/已取消 -> 确认失败，回滚钱包。
+ * 5. 如果余额无变化（卡存在但金额不对）-> 保持 PENDING，不自动处理。
+ *
+ * 安全约束:
+ * - 不输出 token / clientId / apiKey / PAN / CVV
+ * - SUCCESS/FAILED/REFUNDED/CANCELLED 订单不重复处理
+ * - 无充分证据不把 PENDING 改为 SUCCESS
+ */
+export interface ReconcileResult {
+  /** 是否已执行变更操作 */
+  changed: boolean;
+  /** 原始订单状态 */
+  fromStatus: string;
+  /** 变更后的状态（未变则为原状态） */
+  toStatus: string;
+  /** 当前 UQPay card_available_balance（如果有） */
+  uqPayBalance?: number;
+  /** 当前本地 cards.balance（如果有） */
+  localBalance?: number;
+  /** 预期余额（本地余额 + 订单金额） */
+  expectedBalance?: number;
+  /** 更多说明 */
+  detail: string;
+  /** 错误消息（如果有） */
+  error?: string;
+}
+
+export async function reconcileRechargeOrder(
+  orderId: number
+): Promise<ReconcileResult> {
+  const database = getDb();
+
+  // 1. 查询订单
+  const order = db.prepare(
+    'SELECT * FROM uqpay_recharge_orders WHERE id = ?'
+  ).get(orderId) as any;
+
+  if (!order) {
+    return { changed: false, fromStatus: 'NOT_FOUND', toStatus: 'NOT_FOUND', detail: '订单不存在' };
+  }
+
+  const finalStates = ['SUCCESS', 'FAILED', 'REFUNDED', 'CANCELLED'];
+  if (finalStates.includes(order.status)) {
+    return {
+      changed: false,
+      fromStatus: order.status,
+      toStatus: order.status,
+      detail: `订单已是最终状态 ${order.status}，不重复处理`,
+    };
+  }
+
+  // 2. 只有 PENDING / UNKNOWN 才需要 reconcile
+  if (!['PENDING', 'UNKNOWN'].includes(order.status)) {
+    return {
+      changed: false,
+      fromStatus: order.status,
+      toStatus: order.status,
+      detail: `订单状态 ${order.status} 不可补偿，跳过`,
+    };
+  }
+
+  // 3. 查询卡片获取 UQPay external_id
+  const card = db.prepare('SELECT * FROM cards WHERE id = ?').get(order.card_id) as any;
+  if (!card) {
+    return {
+      changed: false,
+      fromStatus: order.status,
+      toStatus: 'UNKNOWN',
+      detail: `卡片不存在 card_id=${order.card_id}，标记 UNKNOWN`,
+    };
+  }
+
+  const externalId = card.external_id;
+  const localBalanceBefore = order.wallet_record_id
+    ? (Number(card.balance) || 0)
+    : 0;
+  const expectedBalance = localBalanceBefore + Number(order.amount || 0);
+
+  // 4. 获取 UQPay SDK
+  const sdk = getUqPaySDK();
+  if (!sdk) {
+    return {
+      changed: false,
+      fromStatus: order.status,
+      toStatus: order.status,
+      detail: 'UQPay SDK 未初始化，渠道不可用',
+      error: 'UQPay channel not configured',
+    };
+  }
+
+  // 5. 调用 getCard 查询 UQPay 侧卡详情
+  let uqCard: any;
+  try {
+    uqCard = await sdk.getCard(externalId);
+  } catch (err: any) {
+    const msg = String(err?.message || err);
+
+    // 卡不存在 → 确认失败
+    if (msg.includes('Card does not exists') || msg.includes('not found') || msg.includes('404')) {
+      // 回滚钱包
+      markRechargeFailed(orderId, `Reconcile: 卡不存在 - ${msg.slice(0, 200)}`, order.user_id, order.card_id, Number(order.amount || 0));
+      return {
+        changed: true,
+        fromStatus: order.status,
+        toStatus: 'FAILED',
+        detail: `UQPay 侧卡片不存在，已标记 FAILED 并回滚钱包`,
+        error: msg.slice(0, 200),
+      };
+    }
+
+    // 其他 API 异常 → 无法确认
+    return {
+      changed: false,
+      fromStatus: order.status,
+      toStatus: order.status,
+      detail: `查询 UQPay 卡片详情失败: ${msg.slice(0, 200)}`,
+      error: msg.slice(0, 200),
+    };
+  }
+
+  const uqStatus = (uqCard.card_status || '').toUpperCase();
+  const uqBalance = Number(uqCard.card_available_balance ?? 0);
+
+  // 6. 判断
+  // 6a. 卡已取消/冻结/挂失 → 充值不可能成功
+  if (['CANCELLED', 'BLOCKED', 'LOST', 'STOLEN'].includes(uqStatus)) {
+    markRechargeFailed(orderId, `Reconcile: UQPay 卡状态 ${uqStatus} 充值不可能成功`, order.user_id, order.card_id, Number(order.amount || 0));
+    return {
+      changed: true,
+      fromStatus: order.status,
+      toStatus: 'FAILED',
+      uqPayBalance: uqBalance,
+      localBalance: localBalanceBefore,
+      expectedBalance,
+      detail: `UQPay 卡状态 ${uqStatus}，已标记 FAILED 并回滚钱包`,
+    };
+  }
+
+  // 6b. 余额增加 ≈ 订单金额 → 确认成功
+  const balanceDiff = uqBalance - localBalanceBefore;
+  const amount = Number(order.amount || 0);
+  // 允许 $0.01 的浮动（UQPay 可能存在手续费微不足道的小额扣减）
+  if (balanceDiff >= amount - 0.01 && balanceDiff <= amount + 0.01) {
+    // 标记 SUCCESS
+    database.run('BEGIN');
+    try {
+      database.run(
+        `UPDATE uqpay_recharge_orders
+         SET status = 'SUCCESS', order_status = 'SUCCESS',
+             card_available_balance = ?,
+             completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status IN ('PENDING', 'UNKNOWN')`,
+        [uqBalance, orderId]
+      );
+      database.run(
+        'UPDATE cards SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [uqBalance, order.card_id]
+      );
+      database.run('COMMIT');
+      saveDatabase();
+    } catch (err: any) {
+      database.run('ROLLBACK');
+      saveDatabase();
+      return {
+        changed: false,
+        fromStatus: order.status,
+        toStatus: order.status,
+        uqPayBalance: uqBalance,
+        localBalance: localBalanceBefore,
+        expectedBalance,
+        detail: `标记 SUCCESS 失败: ${err.message}`,
+        error: err.message,
+      };
+    }
+
+    return {
+      changed: true,
+      fromStatus: order.status,
+      toStatus: 'SUCCESS',
+      uqPayBalance: uqBalance,
+      localBalance: localBalanceBefore,
+      expectedBalance,
+      detail: `UQPay 余额增加 $${balanceDiff.toFixed(2)} ≈ 订单金额 $${amount.toFixed(2)}，确认成功`,
+    };
+  }
+
+  // 6c. 余额增加但金额不匹配 → 无法确认（可能是多笔充值叠加）
+  if (balanceDiff > 0 && (balanceDiff < amount - 0.01 || balanceDiff > amount + 0.01)) {
+    return {
+      changed: false,
+      fromStatus: order.status,
+      toStatus: 'UNKNOWN',
+      uqPayBalance: uqBalance,
+      localBalance: localBalanceBefore,
+      expectedBalance,
+      detail: `UQPay 余额变化 $${balanceDiff.toFixed(2)} 与订单金额 $${amount.toFixed(2)} 不匹配，标记 UNKNOWN，等待人工处理`,
+    };
+  }
+
+  // 6d. 余额无变化 → 保持 PENDING（充值可能还在处理中）
+  return {
+    changed: false,
+    fromStatus: order.status,
+    toStatus: order.status,
+    uqPayBalance: uqBalance,
+    localBalance: localBalanceBefore,
+    expectedBalance,
+    detail: `UQPay 余额无变化 ($${uqBalance})，保持 ${order.status}，等待 webhook 或稍后重试`,
+  };
+}
+
+/**
+ * 批量补偿 PENDING / UNKNOWN 充值订单
+ *
+ * @param maxOrders 每次最多处理的订单数（默认 10）
+ * @param minAgeMinutes 只处理创建超过指定分钟的订单（默认 5）
+ */
+export async function reconcilePendingOrders(
+  maxOrders: number = 10,
+  minAgeMinutes: number = 5
+): Promise<{
+  total: number;
+  succeeded: number;
+  failed: number;
+  unchanged: number;
+  errors: string[];
+  results: ReconcileResult[];
+}> {
+  const pendingOrders = db.prepare(
+    `SELECT id FROM uqpay_recharge_orders
+     WHERE status IN ('PENDING', 'UNKNOWN')
+       AND (julianday('now') - julianday(created_at)) * 24 * 60 >= ?
+     ORDER BY created_at ASC
+     LIMIT ?`
+  ).get(minAgeMinutes, maxOrders) as any[];
+
+  const orders: any[] = Array.isArray(pendingOrders) ? pendingOrders : [pendingOrders].filter(Boolean);
+
+  const results: ReconcileResult[] = [];
+  const errors: string[] = [];
+  let succeeded = 0;
+  let failed = 0;
+  let unchanged = 0;
+
+  for (const row of orders) {
+    try {
+      const result = await reconcileRechargeOrder(row.id);
+      results.push(result);
+      if (result.changed) {
+        if (result.toStatus === 'SUCCESS') {
+          succeeded++;
+        } else if (result.toStatus === 'FAILED') {
+          failed++;
+        }
+      } else {
+        unchanged++;
+      }
+    } catch (err: any) {
+      const msg = `order_id=${row.id} 异常: ${(err?.message || String(err)).slice(0, 200)}`;
+      errors.push(msg);
+      results.push({
+        changed: false,
+        fromStatus: 'ERROR',
+        toStatus: 'ERROR',
+        detail: msg,
+        error: msg,
+      });
+      unchanged++;
+    }
+  }
+
+  return {
+    total: orders.length,
+    succeeded,
+    failed,
+    unchanged,
+    errors,
+    results,
+  };
+}
