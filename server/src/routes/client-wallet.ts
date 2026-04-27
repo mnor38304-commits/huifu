@@ -139,6 +139,180 @@ router.get('/stats', authMiddleware, (req: AuthRequest, res) => {
   });
 });
 
+// ── USDT→USD 钱包兑换（默认关闭，仅灰度测试）─────────────────────
+router.post('/convert/usdt-to-usd', authMiddleware, async (req: AuthRequest, res) => {
+  const userId = req.user!.userId;
+  if (!userId) {
+    return res.json({ code: 401, message: '用户未登录' });
+  }
+
+  // 1. 功能开关检查
+  const enabled = process.env.ENABLE_WALLET_CONVERT === 'true';
+  if (!enabled) {
+    return res.json({ code: 403, message: '钱包兑换功能暂未开放' });
+  }
+
+  // 2. 灰度白名单检查
+  const testUserIds = (process.env.WALLET_CONVERT_TEST_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (testUserIds.length > 0 && !testUserIds.includes(String(userId))) {
+    return res.json({ code: 403, message: '您暂时无法使用兑换功能' });
+  }
+
+  // 3. 参数校验
+  const { amount_usdt } = req.body;
+  const numAmount = Number(amount_usdt);
+  if (!amount_usdt || isNaN(numAmount) || numAmount <= 0) {
+    return res.json({ code: 400, message: '请输入有效的 USDT 兑换数量' });
+  }
+
+  // 4. 幂等键
+  const idempotencyKey = (req.headers['idempotency-key'] as string)
+    || `convert-${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  if (idempotencyKey.length > 64) {
+    return res.json({ code: 400, message: 'Idempotency-Key 长度不能超过 64 字符' });
+  }
+
+  // 5. 汇率
+  const rate = parseFloat(process.env.USDT_TO_USD_RATE || '1.0');
+  if (isNaN(rate) || rate <= 0) {
+    return res.json({ code: 500, message: '系统汇率配置异常' });
+  }
+  const amountUsd = parseFloat((numAmount * rate).toFixed(2));
+
+  try {
+    // 6. 幂等检查
+    const existing = db.prepare('SELECT * FROM wallet_conversions WHERE idempotency_key = ?').get(idempotencyKey) as any;
+    if (existing) {
+      return res.json({
+        code: 0,
+        message: '该订单已处理',
+        data: {
+          id: existing.id,
+          amount_usdt: existing.amount_usdt,
+          amount_usd: existing.amount_usd,
+          rate: existing.rate,
+          balance_usdt_before: existing.balance_usdt_before,
+          balance_usdt_after: existing.balance_usdt_after,
+          balance_usd_before: existing.balance_usd_before,
+          balance_usd_after: existing.balance_usd_after,
+          created_at: existing.created_at,
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    // 7. 原子兑换（使用底层 API 保证事务原子性）
+    const database = getDb();
+    database.run('BEGIN TRANSACTION');
+
+    try {
+      // 7a. 读取钱包
+      const walletRow = database.exec(
+        'SELECT id, balance_usd, balance_usdt FROM wallets WHERE user_id = ?',
+        [userId]
+      );
+      let wallet: any;
+      if (walletRow.length > 0 && walletRow[0].values.length > 0) {
+        const cols = walletRow[0].columns;
+        const vals = walletRow[0].values[0];
+        wallet = {};
+        cols.forEach((c: string, i: number) => { wallet[c] = vals[i]; });
+      }
+
+      if (!wallet) {
+        database.run('ROLLBACK');
+        saveDatabase();
+        return res.json({ code: 400, message: '钱包不存在，请先充值' });
+      }
+
+      const balanceUsdtBefore = Number(wallet.balance_usdt) || 0;
+      const balanceUsdBefore = Number(wallet.balance_usd) || 0;
+
+      if (balanceUsdtBefore < numAmount) {
+        database.run('ROLLBACK');
+        saveDatabase();
+        return res.json({ code: 400, message: `USDT 余额不足，当前余额 ${balanceUsdtBefore} USDT` });
+      }
+
+      const balanceUsdtAfter = parseFloat((balanceUsdtBefore - numAmount).toFixed(8));
+      const balanceUsdAfter = parseFloat((balanceUsdBefore + amountUsd).toFixed(2));
+
+      // 7b. 更新钱包余额
+      database.run(
+        'UPDATE wallets SET balance_usdt = ?, balance_usd = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+        [balanceUsdtAfter, balanceUsdAfter, userId]
+      );
+
+      // 7c. 插入兑换记录
+      database.run(
+        `INSERT INTO wallet_conversions (user_id, amount_usdt, amount_usd, rate,
+          balance_usdt_before, balance_usdt_after,
+          balance_usd_before, balance_usd_after,
+          idempotency_key, remark, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED')`,
+        [userId, numAmount, amountUsd, rate,
+          balanceUsdtBefore, balanceUsdtAfter,
+          balanceUsdBefore, balanceUsdAfter,
+          idempotencyKey, `USDT→USD 兑换 r=1:${rate}`]
+      );
+
+      // 获取 conversion id
+      const convIdRows = database.exec('SELECT last_insert_rowid() as id');
+      let conversionId = 0;
+      if (convIdRows.length > 0 && convIdRows[0].values.length > 0) {
+        conversionId = Number(convIdRows[0].values[0][0]);
+      }
+
+      // 7d. 钱包流水：USDT 扣减
+      database.run(
+        `INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type, reference_id)
+        VALUES (?, 'CONVERT_OUT', ?, ?, ?, 'USDT', ?, 'wallet_conversion', ?)`,
+        [userId, -numAmount, balanceUsdtBefore, balanceUsdtAfter,
+         `USDT→USD 兑换：扣除 ${numAmount} USDT`, conversionId]
+      );
+
+      // 7e. 钱包流水：USD 增加
+      database.run(
+        `INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type, reference_id)
+        VALUES (?, 'CONVERT_IN', ?, ?, ?, 'USD', ?, 'wallet_conversion', ?)`,
+        [userId, amountUsd, balanceUsdBefore, balanceUsdAfter,
+         `USDT→USD 兑换：增加 ${amountUsd} USD`, conversionId]
+      );
+
+      database.run('COMMIT');
+      saveDatabase();
+
+      return res.json({
+        code: 0,
+        message: '兑换成功',
+        data: {
+          id: conversionId,
+          amount_usdt: numAmount,
+          amount_usd: amountUsd,
+          rate,
+          balance_usdt_before: balanceUsdtBefore,
+          balance_usdt_after: balanceUsdtAfter,
+          balance_usd_before: balanceUsdBefore,
+          balance_usd_after: balanceUsdAfter,
+          created_at: new Date().toISOString(),
+        },
+        timestamp: Date.now(),
+      });
+    } catch (txErr: any) {
+      database.run('ROLLBACK');
+      saveDatabase();
+      throw txErr;
+    }
+  } catch (err: any) {
+    console.error('[Wallet/Convert] USDT→USD 兑换失败:', err.message);
+    return res.json({
+      code: 500,
+      message: '兑换处理失败，请稍后重试',
+      timestamp: Date.now(),
+    });
+  }
+});
+
 // ── 充值地址 / 收银台入口（支持所有渠道）───────────────────────────────
 router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
   const userId = req.user!.userId;
@@ -476,6 +650,31 @@ router.get('/deposit/:orderNo/status', authMiddleware, async (req: AuthRequest, 
   // 返回最新状态
   const updatedOrder = db.prepare('SELECT * FROM usdt_orders WHERE order_no = ?').get(orderNo);
   res.json({ code: 0, data: updatedOrder, timestamp: Date.now() });
+});
+
+// ── 兑换记录列表 ──────────────────────────────────────────────────
+router.get('/convert/records', authMiddleware, (req: AuthRequest, res) => {
+  const userId = req.user!.userId;
+  const page = Number(req.query.page) || 1;
+  const pageSize = Number(req.query.pageSize) || 10;
+  const offset = (page - 1) * pageSize;
+
+  const list: any[] = db.prepare(`
+    SELECT id, amount_usdt, amount_usd, rate,
+           balance_usdt_before, balance_usdt_after,
+           balance_usd_before, balance_usd_after,
+           status, remark, created_at
+    FROM wallet_conversions
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, pageSize, offset);
+
+  const { total } = db.prepare(
+    'SELECT COUNT(*) as total FROM wallet_conversions WHERE user_id = ?'
+  ).get(userId) as { total: number };
+
+  res.json({ code: 0, data: { list, total, page, pageSize }, timestamp: Date.now() });
 });
 
 export default router;

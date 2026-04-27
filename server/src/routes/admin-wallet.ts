@@ -167,4 +167,24 @@ router.get('/records/:userId', adminAuth, (req, res) => {
   res.json({ code: 0, data: { list, total, page: Number(page), pageSize: Number(pageSize) }, timestamp: Date.now() });
 });
 
+// ── 获取兑换记录 ─────────────────────────────────────────────────
+router.get('/conversions/:userId', adminAuth, (req, res) => {
+  const { userId } = req.params;
+  const { page = 1, pageSize = 20 } = req.query;
+  const offset = (Number(page) - 1) * Number(pageSize);
+
+  const list = db.prepare(`
+    SELECT * FROM wallet_conversions
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, Number(pageSize), offset);
+
+  const total = (db.prepare(
+    'SELECT COUNT(*) as c FROM wallet_conversions WHERE user_id = ?'
+  ).get(userId) as any).c;
+
+  res.json({ code: 0, data: { list, total, page: Number(page), pageSize: Number(pageSize) }, timestamp: Date.now() });
+});
+
 export default router;

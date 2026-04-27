@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Card, Row, Col, Statistic, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Alert, QRCode, Tabs, Empty, Spin, Steps } from 'antd';
-import { WalletOutlined, QrcodeOutlined, HistoryOutlined, CopyOutlined, CheckCircleOutlined, SyncOutlined, LoadingOutlined, LinkOutlined } from '@ant-design/icons';
-import { getWalletInfo, getWalletStats, getDepositList, checkDepositStatus } from '../services/api';
+import { SwapOutlined, WalletOutlined, QrcodeOutlined, HistoryOutlined, CopyOutlined, CheckCircleOutlined, SyncOutlined, LoadingOutlined, LinkOutlined } from '@ant-design/icons';
+import { getWalletInfo, getWalletStats, getDepositList, checkDepositStatus, createWalletConvert, getConversionRecords } from '../services/api';
 
 const { TabPane } = Tabs;
 
@@ -29,6 +29,13 @@ export default function Wallet() {
   const [addressModal, setAddressModal] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<any>(null);
   const [selectedNetwork, setSelectedNetwork] = useState('TRC20');
+
+  // USDT→USD 兑换
+  const [convertModal, setConvertModal] = useState(false);
+  const [convertLoading, setConvertLoading] = useState(false);
+  const [convertForm] = Form.useForm();
+  const [convertResult, setConvertResult] = useState<any>(null);
+  const [conversionList, setConversionList] = useState<any[]>([]);
 
   // ── 加载钱包信息 ────────────────────────────────────────────────
   const loadWallet = async () => {
@@ -58,7 +65,7 @@ export default function Wallet() {
   };
 
   useEffect(() => {
-    Promise.all([loadWallet(), loadStats(), loadDeposits()]).finally(() => setLoading(false));
+    Promise.all([loadWallet(), loadStats(), loadDeposits(), loadConversionRecords()]).finally(() => setLoading(false));
     // 检查 URL 参数（CoinPal 回调跳转回来时）
     const params = new URLSearchParams(window.location.search);
     if (params.get('status') === 'success') {
@@ -157,6 +164,35 @@ export default function Wallet() {
     }
   };
 
+  // ── USDT→USD 兑换 ─────────────────────────────────────────────
+  const handleConvert = async (values: any) => {
+    setConvertLoading(true);
+    try {
+      const key = `convert-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const r: any = await createWalletConvert({ amount_usdt: values.amount }, key);
+      if (r.code === 0) {
+        setConvertResult(r.data);
+        message.success('兑换成功！');
+        loadWallet();
+        loadConversionRecords();
+      } else {
+        message.error(r.message || '兑换失败');
+      }
+    } catch (e: any) {
+      message.error(e?.message || '兑换失败');
+    } finally {
+      setConvertLoading(false);
+    }
+  };
+
+  // ── 加载兑换记录 ───────────────────────────────────────────────
+  const loadConversionRecords = async () => {
+    try {
+      const r: any = await getConversionRecords({ page: 1, pageSize: 5 });
+      if (r.code === 0) setConversionList(r.data.list || []);
+    } catch (e) { /* ignore */ }
+  };
+
   // ── 复制地址 ───────────────────────────────────────────────────
   const copyAddress = (address: string) => {
     navigator.clipboard.writeText(address).then(() => message.success('地址已复制'));
@@ -198,9 +234,18 @@ export default function Wallet() {
       {/* 页面标题 */}
       <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}><WalletOutlined /> 我的钱包</h2>
-        <Button type="primary" icon={<QrcodeOutlined />} onClick={() => setDepositModal(true)}>
-          充值 USDT
-        </Button>
+        <Space>
+          <Button icon={<SwapOutlined />} onClick={() => {
+            convertForm.resetFields();
+            setConvertResult(null);
+            setConvertModal(true);
+          }}>
+            兑换 USD
+          </Button>
+          <Button type="primary" icon={<QrcodeOutlined />} onClick={() => setDepositModal(true)}>
+            充值 USDT
+          </Button>
+        </Space>
       </div>
 
       {/* 余额卡片 */}
@@ -220,6 +265,24 @@ export default function Wallet() {
           </Card>
         </Col>
       </Row>
+
+      {/* 兑换记录 */}{conversionList.length > 0 && (
+        <Card title={<><SwapOutlined /> USDT→USD 兑换记录</>} style={{ marginBottom: 24 }}>
+          <Table
+            dataSource={conversionList}
+            rowKey="id"
+            size="small"
+            pagination={false}
+            columns={[
+              { title: 'USDT 扣减', dataIndex: 'amount_usdt', render: (v: number) => <Tag color="orange">-{v} USDT</Tag> },
+              { title: 'USD 增加', dataIndex: 'amount_usd', render: (v: number) => <Tag color="green">+{v} USD</Tag> },
+              { title: '汇率', dataIndex: 'rate', render: (v: number) => `1:${v}` },
+              { title: '状态', dataIndex: 'status', render: (v: string) => v === 'COMPLETED' ? <Tag color="green">完成</Tag> : <Tag color="red">失败</Tag> },
+              { title: '时间', dataIndex: 'created_at', render: (v: string) => new Date(v).toLocaleString('zh-CN') },
+            ]}
+          />
+        </Card>
+      )}
 
       {/* 充值记录表格 */}
       <Card title={<><HistoryOutlined /> 充值记录</>}>
@@ -268,6 +331,93 @@ export default function Wallet() {
           type="info"
           style={{ marginTop: 8 }}
         />
+      </Modal>
+
+      {/* ── USDT→USD 兑换模态框 ──────────────────────────────── */}
+      <Modal
+        title="USDT → USD 兑换"
+        open={convertModal}
+        onCancel={() => { setConvertModal(false); setConvertResult(null); }}
+        footer={null}
+      >
+        {convertResult ? (
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <CheckCircleOutlined style={{ fontSize: 48, color: '#52c41a' }} />
+            <h3 style={{ marginTop: 16 }}>兑换成功</h3>
+            <Row gutter={16} style={{ marginTop: 24 }}>
+              <Col span={12}>
+                <Statistic title="USDT 扣减" value={convertResult.amount_usdt} suffix="USDT" />
+              </Col>
+              <Col span={12}>
+                <Statistic title="USD 增加" value={convertResult.amount_usd} prefix="$" valueStyle={{ color: '#52c41a' }} />
+              </Col>
+            </Row>
+            <Row gutter={16} style={{ marginTop: 16 }}>
+              <Col span={12}>
+                <Statistic title="兑换前 USDT" value={convertResult.balance_usdt_before} suffix="USDT" />
+              </Col>
+              <Col span={12}>
+                <Statistic title="兑换后 USDT" value={convertResult.balance_usdt_after} suffix="USDT" />
+              </Col>
+            </Row>
+            <Row gutter={16} style={{ marginTop: 16 }}>
+              <Col span={12}>
+                <Statistic title="兑换前 USD" value={convertResult.balance_usd_before} prefix="$" />
+              </Col>
+              <Col span={12}>
+                <Statistic title="兑换后 USD" value={convertResult.balance_usd_after} prefix="$" valueStyle={{ color: '#52c41a' }} />
+              </Col>
+            </Row>
+            <Button type="primary" style={{ marginTop: 24 }} onClick={() => { setConvertModal(false); setConvertResult(null); }}>
+              完成
+            </Button>
+          </div>
+        ) : (
+          <Form form={convertForm} layout="vertical" onFinish={handleConvert}>
+            <Alert
+              message="将 USDT 余额按 1:1 兑换为 USD 余额，用于卡片充值和消费。"
+              type="info"
+              style={{ marginBottom: 16 }}
+            />
+            <Form.Item label="当前 USDT 余额" style={{ marginBottom: 8 }}>
+              <Tag color="blue" style={{ fontSize: 16, padding: '4px 12px' }}>₮{(wallet?.balance_usdt || 0).toFixed(2)}</Tag>
+            </Form.Item>
+            <Form.Item label="预计可获 USD" style={{ marginBottom: 8 }}>
+              <Tag color="green" style={{ fontSize: 16, padding: '4px 12px' }}>$<span id="expectedUsd">0.00</span></Tag>
+            </Form.Item>
+            <Form.Item label="兑换数量 (USDT)" name="amount"
+              rules={[
+                { required: true, message: '请输入兑换数量' },
+                { type: 'number', min: 1, message: '最少兑换 1 USDT' },
+                () => ({
+                  validator(_, value) {
+                    if (value && value > (wallet?.balance_usdt || 0)) {
+                      return Promise.reject(new Error('USDT 余额不足'));
+                    }
+                    return Promise.resolve();
+                  },
+                }),
+              ]}
+            >
+              <InputNumber
+                min={1}
+                max={wallet?.balance_usdt || 0}
+                step={1}
+                style={{ width: '100%' }}
+                placeholder={`最大 ${(wallet?.balance_usdt || 0).toFixed(2)} USDT`}
+                onChange={(v) => {
+                  const el = document.getElementById('expectedUsd');
+                  if (el) el.textContent = (Number(v) || 0).toFixed(2);
+                }}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block size="large" loading={convertLoading}>
+                立即兑换
+              </Button>
+            </Form.Item>
+          </Form>
+        )}
       </Modal>
 
       {/* ── CoinPal 收银台模态框 ─────────────────────────────── */}

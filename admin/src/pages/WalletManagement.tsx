@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Table, Card, Button, Input, Modal, Form, InputNumber, Select, message, Tag, Space, Typography, Row, Col, Statistic } from 'antd'
-import { SearchOutlined, PlusOutlined, MinusOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons'
-import { getWalletList, getWalletDetail, adjustWalletBalance, getWalletRecords } from '../api'
+import { SearchOutlined, PlusOutlined, MinusOutlined, EyeOutlined, ReloadOutlined, SwapOutlined } from '@ant-design/icons'
+import { getWalletList, getWalletDetail, adjustWalletBalance, getWalletRecords, getWalletConversions } from '../api'
 
 const { Text } = Typography
 
@@ -21,6 +21,7 @@ export default function WalletManagement() {
   const [detailVisible, setDetailVisible] = useState(false)
   const [detailData, setDetailData] = useState<any>(null)
   const [records, setRecords] = useState<any[]>([])
+  const [conversionRecords, setConversionRecords] = useState<any[]>([])
 
   const loadData = async (page = 1, pageSize = 20) => {
     setLoading(true)
@@ -78,10 +79,12 @@ export default function WalletManagement() {
   const openDetail = async (wallet: any) => {
     setDetailVisible(true)
     setDetailData(wallet)
-    const res: any = await getWalletRecords(wallet.user_id)
-    if (res.code === 0) {
-      setRecords(res.data.list || [])
-    }
+    const [recRes, convRes] = await Promise.all([
+      getWalletRecords(wallet.user_id),
+      getWalletConversions(wallet.user_id),
+    ])
+    if (recRes.code === 0) setRecords(recRes.data.list || [])
+    if (convRes.code === 0) setConversionRecords(convRes.data.list || [])
   }
 
   const columns = [
@@ -195,6 +198,25 @@ export default function WalletManagement() {
             </Row>
             <Text strong style={{ display: 'block', marginBottom: 8 }}>调整记录</Text>
             <Table columns={recordColumns} dataSource={records} rowKey="id" size="small" pagination={false} />
+            <Text strong style={{ display: 'block', marginBottom: 8, marginTop: 16 }}><SwapOutlined /> 兑换记录</Text>
+            <Table
+              columns={[
+                { title: 'USDT 扣减', dataIndex: 'amount_usdt', render: (v: number) => <Tag color="orange">-{v} USDT</Tag> },
+                { title: 'USD 增加', dataIndex: 'amount_usd', render: (v: number) => <Tag color="green">+{v} USD</Tag> },
+                { title: '汇率', dataIndex: 'rate', render: (v: number) => `1:${v}` },
+                { title: 'USDT 变动前', dataIndex: 'balance_usdt_before', render: (v: number) => v?.toFixed(2) },
+                { title: 'USDT 变动后', dataIndex: 'balance_usdt_after', render: (v: number) => v?.toFixed(2) },
+                { title: 'USD 变动前', dataIndex: 'balance_usd_before', render: (v: number) => v?.toFixed(2) },
+                { title: 'USD 变动后', dataIndex: 'balance_usd_after', render: (v: number) => v?.toFixed(2) },
+                { title: '状态', dataIndex: 'status', width: 80, render: (v: string) =>
+                  v === 'COMPLETED' ? <Tag color="green">完成</Tag> : <Tag color="red">失败</Tag> },
+                { title: '时间', dataIndex: 'created_at', width: 160 },
+              ]}
+              dataSource={conversionRecords}
+              rowKey="id"
+              size="small"
+              pagination={false}
+            />
           </>
         )}
       </Modal>
