@@ -1,10 +1,19 @@
 ﻿import { Router, Response } from 'express';
+import { randomUUID } from 'crypto';
 import db, { getDb, saveDatabase } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ApiResponse, Card } from '../types';
 import { sendEmail, cardOpenedTemplate, topupSuccessTemplate } from '../mail';
 import { UqPaySDK } from '../channels/uqpay';
 import { getMerchantOpenableBins } from '../merchant-bin-access';
+import {
+  validateTopup,
+  checkPendingOrder,
+  createRechargeOrder,
+  callUqPayRecharge,
+  markRechargeSuccess,
+  markRechargeFailed,
+} from '../services/uqpay-recharge';
 
 const router = Router();
 
@@ -498,7 +507,7 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
   // 2. 校验卡片
   const card = db.prepare(
     'SELECT c.*, u.email FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?'
-  ).get(req.params.id, userId) as (Card & { email?: string }) | undefined;
+  ).get(req.params.id, userId) as (Card & { email?: string; channel_code?: string; external_id?: string }) | undefined;
 
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
@@ -508,12 +517,133 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
     return res.json({ code: 400, message: '卡片状态异常', timestamp: Date.now() });
   }
 
-  // 2.5 UQPay / 渠道卡不允许本地充值（需走渠道真实资金接口）
+  // 3. UQPay 卡走真实充值流程
   if (card.channel_code && card.channel_code.toUpperCase() === 'UQPAY') {
-    return res.json({ code: 400, message: 'UQPay 卡充值接口待接入渠道真实资金接口，暂不可用', timestamp: Date.now() });
+    try {
+      // 3a. 校验
+      const validation = validateTopup(card.id, userId, numAmount);
+
+      // 3b. 幂等/并发检查
+      if (checkPendingOrder(card.id)) {
+        return res.json({
+          code: 400,
+          message: '该卡有充值请求正在处理中，请稍后查询',
+          timestamp: Date.now(),
+        });
+      }
+
+      // 3c. 生成幂等键
+      const uniqueRequestId = randomUUID();
+
+      // 3d. 开启事务：扣钱包 + 写订单
+      const orderId = createRechargeOrder(
+        userId,
+        card.id,
+        numAmount,
+        uniqueRequestId,
+        validation.externalId,
+        validation.cardNoMasked,
+        validation.walletBalance
+      );
+
+      console.log(
+        `[UQPay Topup] 充值请求已创建: orderId=${orderId}, amount=${numAmount}, cardId=${card.id}`
+      );
+
+      // 3e. 获取 SDK
+      const uqpayChannel = db.prepare(
+        "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'UQPAY' AND status = 1"
+      ).get() as any;
+      if (!uqpayChannel) {
+        throw new Error('UQPay 渠道未配置');
+      }
+
+      let config: Record<string, string> = {};
+      try { config = JSON.parse(uqpayChannel.config_json || '{}'); } catch (_) {}
+
+      const sdk = new UqPaySDK({
+        clientId: config.clientId || uqpayChannel.api_key || '',
+        apiKey: config.apiSecret || uqpayChannel.api_secret || '',
+        baseUrl: uqpayChannel.api_base_url || undefined,
+      });
+
+      // 3f. 调用 UQPay 真实充值
+      const result = await callUqPayRecharge(sdk, validation.externalId, numAmount, uniqueRequestId);
+
+      console.log(
+        `[UQPay Topup] API 响应: orderId=${orderId}, status=${result.order_status}, card_order_id=${result.card_order_id}`
+      );
+
+      // 3g. 根据结果处理
+      if (result.order_status === 'SUCCESS') {
+        const newCardBalance = await markRechargeSuccess(orderId, result, card.id);
+
+        // 获取更新后的钱包余额
+        const updatedWallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
+
+        return res.json({
+          code: 0,
+          message: '充值成功',
+          data: {
+            orderId,
+            orderStatus: 'SUCCESS',
+            newCardBalance,
+            walletBalance: updatedWallet ? updatedWallet.balance_usd : 0,
+          },
+          timestamp: Date.now(),
+        });
+      } else if (result.order_status === 'PENDING') {
+        // 异步处理中，钱包已扣，等 webhook 回调
+        const updatedWallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
+
+        return res.json({
+          code: 0,
+          message: '充值处理中，请稍后查询',
+          data: {
+            orderId,
+            orderStatus: 'PENDING',
+            walletBalance: updatedWallet ? updatedWallet.balance_usd : 0,
+          },
+          timestamp: Date.now(),
+        });
+      } else {
+        // FAILED
+        markRechargeFailed(orderId, 'UQPay returned FAILED', userId, card.id, numAmount);
+
+        return res.json({
+          code: 400,
+          message: '充值失败: UQPay 拒绝了充值请求',
+          data: { orderId, orderStatus: 'FAILED' },
+          timestamp: Date.now(),
+        });
+      }
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+
+      // 网络超时或未知错误 → 标记为 UNKNOWN，不回滚
+      if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') ||
+          msg.includes('socket hang up') || msg.includes('fetch failed') ||
+          msg.includes('network') || msg.includes('timeout')) {
+        console.error('[UQPay Topup] 网络错误:', msg);
+        return res.json({
+          code: 0,
+          message: '充值状态待确认，请稍后查询',
+          timestamp: Date.now(),
+        });
+      }
+
+      // 其他错误（如校验失败 code=400）
+      if (err.code && err.code >= 400 && err.code < 500) {
+        return res.json({ code: err.code, message: err.message, timestamp: Date.now() });
+      }
+
+      console.error('[UQPay Topup] 充值异常:', msg);
+      return res.json({ code: 500, message: '充值失败: ' + msg, timestamp: Date.now() });
+    }
   }
 
-  // 3. 校验钱包余额
+  // 4. 非 UQPay 卡：保持现有本地测试充值逻辑
+  // 4a. 校验钱包余额
   const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
   if (!wallet) {
     return res.json({ code: 400, message: '钱包不存在，请先创建钱包', timestamp: Date.now() });
@@ -523,7 +653,7 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
     return res.json({ code: 400, message: `钱包余额不足，当前余额: $${wallet.balance_usd}`, timestamp: Date.now() });
   }
 
-  // 4. 使用事务执行：扣减钱包 → 增加卡余额 → 写流水
+  // 4b. 使用事务执行：扣减钱包 → 增加卡余额 → 写流水
   const database = getDb();
   try {
     database.run('BEGIN');
