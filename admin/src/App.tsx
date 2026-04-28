@@ -20,6 +20,7 @@ import Transactions from './pages/Transactions'
 import Notices from './pages/Notices'
 import AdminLogs from './pages/AdminLogs'
 import WalletManagement from './pages/WalletManagement'
+import UqpayMonitor from './pages/UqpayMonitor'
 import { getAdminInfo } from './api'
 
 const { Header, Sider, Content } = Layout
@@ -52,6 +53,12 @@ const menuItems = [
   { key: '/transactions', icon: <SwapOutlined />, label: '交易流水' },
   { key: '/notices', icon: <BellOutlined />, label: '公告管理' },
   { key: '/logs', icon: <FileTextOutlined />, label: '操作日志' },
+  {
+    key: 'uqpay', icon: <SafetyOutlined />, label: 'UQPay 监控',
+    children: [
+      { key: '/uqpay-monitor', label: '充值监控' },
+    ]
+  },
 ]
 
 export default function App() {
@@ -122,7 +129,7 @@ export default function App() {
           }
         </div>
         <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]}
-          defaultOpenKeys={['merchant', 'card', 'usdt']}
+          defaultOpenKeys={['merchant', 'card', 'usdt', 'uqpay']}
           onClick={({ key }) => navigate(key)} items={menuItems} />
       </Sider>
 
@@ -160,6 +167,7 @@ export default function App() {
             <Route path="/usdt-channel" element={<UsdtChannel />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/wallet" element={<WalletManagement />} />
+            <Route path="/uqpay-monitor" element={<UqpayMonitor />} />
             <Route path="/notices" element={<Notices />} />
             <Route path="/logs" element={<AdminLogs />} />
             <Route path="*" element={<Navigate to="/" replace />} />
