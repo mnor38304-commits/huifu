@@ -1,0 +1,13 @@
+/var/log/uqpay-reconcile.log
+/var/log/uqpay-alert.log {
+    daily
+    rotate 30
+    size 10M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su ubuntu ubuntu
+    create 0644 ubuntu ubuntu
+}

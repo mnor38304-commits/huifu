@@ -1,0 +1,11 @@
+# ── UQPay 充值订单补偿（每 10 分钟）─────────────────────────
+# 扫描 PENDING/UNKNOWN 订单，通过 getCard() 比对余额确认最终状态。
+# 安全：不执行充值，不修改用户端数据（除非确认失败后回滚）。
+# 日志：/var/log/uqpay-reconcile.log
+*/10 * * * * ubuntu flock -n /tmp/uqpay-reconcile.lock bash -c 'cd /opt/huifu/server && npm run reconcile:uqpay-recharges -- --max-orders=10 --min-age=10 --remark="cron自动对账" >> /var/log/uqpay-reconcile.log 2>&1'
+
+# ── UQPay PENDING/UNKNOWN 告警扫描（每 5 分钟）──────────────
+# 扫描长时间未处理的 PENDING/UNKNOWN 订单及异常 Webhook 事件。
+# 只写入 reconcile_alerts 表，不修改订单数据，不改余额。
+# 日志：/var/log/uqpay-alert.log
+*/5 * * * * ubuntu flock -n /tmp/uqpay-alert.lock bash -c 'cd /opt/huifu/server && npm run alert:pending-orders -- --max=50 --hours=24 >> /var/log/uqpay-alert.log 2>&1'

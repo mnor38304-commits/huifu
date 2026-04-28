@@ -293,7 +293,31 @@ export async function initDatabase(): Promise<Database> {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── UQPay 对账告警记录表 ──────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS reconcile_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_key TEXT NOT NULL UNIQUE,
+    alert_type TEXT NOT NULL,
+    severity TEXT NOT NULL,          -- WARNING / CRITICAL
+    order_id INTEGER,
+    user_id INTEGER,
+    card_id INTEGER,
+    status TEXT,
+    message TEXT NOT NULL,
+    payload_json TEXT,
+    first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    resolve_reason TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   try {
+    db.run('CREATE INDEX IF NOT EXISTS idx_reconcile_alerts_severity ON reconcile_alerts(severity)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_reconcile_alerts_status ON reconcile_alerts(status)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_reconcile_alerts_order_id ON reconcile_alerts(order_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_reconcile_alerts_created_at ON reconcile_alerts(created_at)');
     db.run('CREATE INDEX IF NOT EXISTS idx_users_user_no ON users(user_no)');
     db.run('CREATE INDEX IF NOT EXISTS idx_cards_user_id ON cards(user_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_transactions_card_id ON transactions(card_id)');
