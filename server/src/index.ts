@@ -24,6 +24,7 @@ import adminCardsRoutes from './routes/admin-cards';
 import adminUsdtRoutes from './routes/admin-usdt';
 import adminOpsRoutes from './routes/admin-ops';
 import adminWalletRoutes from './routes/admin-wallet';
+import adminUqpayMonitorRoutes from './routes/admin-uqpay-monitor';
 
 // Webhook 路由（CoinPal IPN 回调）
 import coinpalWebhookRoutes from './routes/coinpal-webhook';
@@ -85,6 +86,7 @@ app.use('/api/admin/cards', adminCardsRoutes);
 app.use('/api/admin/usdt', adminUsdtRoutes);
 app.use('/api/admin/ops', adminOpsRoutes);
 app.use('/api/admin/wallet', adminWalletRoutes);
+app.use('/api/admin/uqpay', adminUqpayMonitorRoutes);
 
 // ── Webhook 回调（CoinPal IPN，无认证）────────────────────────────
 app.use('/api/v1/webhook/coinpal', coinpalWebhookRoutes);
