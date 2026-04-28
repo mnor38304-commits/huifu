@@ -12,7 +12,8 @@
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "diagnose:uqpay": "tsx src/scripts/diagnose-uqpay.ts",
-"reconcile:uqpay-recharges": "tsx src/scripts/reconcile-recharges.ts"
+    "reconcile:uqpay-recharges": "tsx src/scripts/reconcile-recharges.ts",
+    "alert:pending-orders": "tsx src/scripts/alert-pending-orders.ts"
   },
   "dependencies": {
     "axios": "^1.6.7",
