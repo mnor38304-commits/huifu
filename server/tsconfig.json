@@ -15,5 +15,5 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/seed.ts"]
+  "exclude": ["node_modules", "dist", "**/seed.ts", "src/scripts/wallet-convert-integration-test.ts"]
 }
