@@ -13,6 +13,9 @@ import {
   callUqPayRecharge,
   markRechargeSuccess,
   markRechargeFailed,
+  checkRechargeLimits,
+  recordRechargeFailure,
+  clearRechargeFailure,
 } from '../services/uqpay-recharge';
 
 const router = Router();
@@ -529,12 +532,14 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
     if (!whitelist.includes(userId)) {
       return res.json({ code: 403, message: 'UQPay 真实充值仅限测试用户', timestamp: Date.now() });
     }
+    // 白名单用户跳过所有限额校验（单笔、日累计、并发、失败冻结）
+    const skipLimits = whitelist.includes(userId);
     // -----------------------------------------------------------------
     try {
       // 3a. 校验
       const validation = validateTopup(card.id, userId, numAmount);
 
-      // 3b. 幂等/并发检查
+      // 3b. 幂等/并发检查（同卡 PENDING 保护）
       if (checkPendingOrder(card.id)) {
         return res.json({
           code: 400,
@@ -543,7 +548,10 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
         });
       }
 
-      // 3c. 生成幂等键
+      // 3c. 综合限额校验（金额上下限、日累计、卡累计、用户PENDING并发、失败冻结）
+      checkRechargeLimits(userId, card.id, numAmount, skipLimits);
+
+      // 3d. 生成幂等键
       const uniqueRequestId = randomUUID();
 
       // 3d. 开启事务：扣钱包 + 写订单
@@ -587,6 +595,8 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
 
       // 3g. 根据结果处理
       if (result.order_status === 'SUCCESS') {
+        // 充值成功 → 清除连续失败计数
+        clearRechargeFailure(userId);
         const newCardBalance = await markRechargeSuccess(orderId, result, card.id);
 
         // 获取更新后的钱包余额
@@ -620,6 +630,7 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
       } else {
         // FAILED
         markRechargeFailed(orderId, 'UQPay returned FAILED', userId, card.id, numAmount);
+        recordRechargeFailure(userId);
 
         return res.json({
           code: 400,
