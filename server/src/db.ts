@@ -228,23 +228,29 @@ export async function initDatabase(): Promise<Database> {
 
   // ── UQPay 充值订单表 ─────────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS uqpay_recharge_orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    unique_request_id TEXT NOT NULL UNIQUE,
-    card_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    currency TEXT DEFAULT 'USD',
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    -- PENDING / SUCCESS / FAILED / REFUNDED / CANCELLED
-    uqpay_response TEXT,
-    wallet_record_id TEXT,
-    card_txn_id TEXT,
-    error_message TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (card_id) REFERENCES cards(id),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+   id INTEGER PRIMARY KEY AUTOINCREMENT,
+   unique_request_id TEXT NOT NULL UNIQUE,
+   card_id INTEGER NOT NULL,
+   user_id INTEGER NOT NULL,
+   amount REAL NOT NULL,
+   currency TEXT DEFAULT 'USD',
+   status TEXT NOT NULL DEFAULT 'PENDING',
+   -- PENDING / SUCCESS / FAILED / REFUNDED / CANCELLED
+   uqpay_response TEXT,
+   wallet_record_id TEXT,
+   card_txn_id TEXT,
+   error_message TEXT,
+   admin_user_id INTEGER,
+   audit_remark TEXT,
+   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+   FOREIGN KEY (card_id) REFERENCES cards(id),
+   FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
+
+  // ── 兼容旧表：补充新列（已存在则忽略）───────────────────────
+  try { db.run('ALTER TABLE uqpay_recharge_orders ADD COLUMN admin_user_id INTEGER'); } catch (_) {}
+  try { db.run('ALTER TABLE uqpay_recharge_orders ADD COLUMN audit_remark TEXT'); } catch (_) {}
 
   // ── UQPay Webhook 事件表 ─────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS uqpay_webhook_events (
