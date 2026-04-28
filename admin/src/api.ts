@@ -103,4 +103,9 @@ export const adjustWalletBalance = (userId: number, amount: number, type: 'incre
 export const getWalletRecords = (userId: number, p?: any) => BASE.get(`/wallet/records/${userId}`, { params: p })
 export const getWalletConversions = (userId: number, p?: any) => BASE.get(`/wallet/conversions/${userId}`, { params: p })
 
+// ── UQPay 监控 ────────────────────────────────────────────────
+export const getUqpayRechargeOrders = (p: any) => BASE.get('/uqpay/recharge-orders', { params: p })
+export const getUqpayReconcileAlerts = (p: any) => BASE.get('/uqpay/reconcile-alerts', { params: p })
+export const getUqpayWebhookEvents = (p: any) => BASE.get('/uqpay/webhook-events', { params: p })
+
 export default BASE
