@@ -169,6 +169,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   let channelCode = 'MOCK';
   let uqpayCardholderId: string | null = null;
   let uqpayCardResult: any = null; // UQPay 开卡结果（用于后续 card_order_id 等字段）
+  let effectiveInitialBalance = 0; // UQPay card_available_balance 初始值（默认 0）
 
   const channel = await getChannelSDK();
   let allowedBins = getMerchantOpenableBins(req.user!.userId);
@@ -255,6 +256,27 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       // 保存开卡结果供后续写入 card_order_id
       uqpayCardResult = cardResult;
 
+      // 尝试获取初始卡余额
+      let initialCardBalance: number | null = null;
+      if (cardResult.rawJson?.card_available_balance != null) {
+        initialCardBalance = Number(cardResult.rawJson.card_available_balance);
+        console.log('[UQPay] 开卡响应含 card_available_balance:', initialCardBalance);
+      }
+      if (initialCardBalance == null) {
+        try {
+          console.log('[UQPay] 开卡响应无余额，只读查询 getCard...');
+          const cardDetail = await sdk.getCard(cardResult.card_id);
+          if (cardDetail.card_available_balance != null) {
+            initialCardBalance = Number(cardDetail.card_available_balance);
+            console.log('[UQPay] getCard 返回 card_available_balance:', initialCardBalance);
+          }
+        } catch (getErr: any) {
+          console.warn('[UQPay] getCard 查询余额失败（只读，不影响开卡）:', getErr.message);
+        }
+      }
+      effectiveInitialBalance = initialCardBalance ?? 0;
+      console.log('[UQPay] 初始 cards.balance 将写入:', effectiveInitialBalance);
+
     } catch (err: any) {
       console.error('[UQPay] 开卡失败:', err.message);
       return res.json({
@@ -316,7 +338,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type,
       currency, balance, credit_limit, single_limit, daily_limit, status, expire_date,
       cvv, purpose, external_id, channel_code, uqpay_cardholder_id, card_order_id)
-    VALUES (?, ?, ?, ?, ?, ?, 'USD', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cardNo,
     masked,
@@ -324,6 +346,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     selectedBinId,
     cardName,
     cardType,
+    effectiveInitialBalance,
     creditLimit,
     singleLimit || null,
     dailyLimit || null,
