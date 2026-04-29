@@ -19,6 +19,7 @@
  * 3. 输出处理结果
  */
 
+import { initDatabase } from '../db';
 import { reconcilePendingOrders } from '../services/uqpay-recharge';
 
 function parseArgs(): { max: number; minAge: number; dryRun: boolean; json: boolean } {
@@ -42,6 +43,9 @@ function parseArgs(): { max: number; minAge: number; dryRun: boolean; json: bool
 
 async function main() {
   const opts = parseArgs();
+
+  // 初始化数据库（脚本独立进程，不走 Express server 的 initDatabase）
+  await initDatabase();
 
   const startTime = Date.now();
 
