@@ -143,8 +143,8 @@ router.get('/deposit-fee-config', adminAuth, (req, res) => {
 
 router.put('/deposit-fee-config', adminAuth, (req: AdminRequest, res) => {
   const { feeRate, feeEnabled } = req.body;
-  if (feeRate != null && (isNaN(feeRate) || feeRate < 0 || feeRate > 1)) {
-    return res.json({ code: 400, message: '手续费比例必须在 0~1 之间（如 0.05 = 5%）' });
+  if (feeRate != null && (isNaN(feeRate) || feeRate < 0 || feeRate > 0.2)) {
+    return res.json({ code: 400, message: '手续费比例必须在 0~0.2 之间（如 0.05 = 5%，最高 20%）' });
   }
   const channel = db.prepare(
     "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'COINPAL' AND status = 1"

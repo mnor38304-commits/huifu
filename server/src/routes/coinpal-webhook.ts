@@ -154,37 +154,54 @@ router.post('/notify', async (req, res) => {
         const grossAmount = paidAmount ? parseFloat(paidAmount) : parseFloat(order.amount_usdt);
         if (grossAmount > 0 && Number.isFinite(grossAmount)) {
           try {
-            // 读取手续费配置（从 COINPAL config_json）
-            let feeRate = 0.05; // 默认 5%
-            let feeEnabled = true;
-            try {
-              const channel = db.prepare(
-                "SELECT * FROM card_channels WHERE channel_code = 'COINPAL' AND status = 1"
-              ).get() as any;
-              if (channel && channel.config_json) {
-                const cfg = JSON.parse(channel.config_json);
-                if (cfg.depositFeeEnabled === false) {
-                  feeEnabled = false;
+            // ⚠️ 费率锁定原则：优先使用创建订单时保存的 fee_rate
+            // 不允许 webhook 入账时重新读取最新 config_json 来结算老订单
+            let feeRate = 0;
+            let feeEnabled = false;
+            const orderFeeRate = order.fee_rate;
+            if (orderFeeRate != null && Number(orderFeeRate) > 0) {
+              feeRate = Number(orderFeeRate);
+              feeEnabled = true;
+            } else if (orderFeeRate != null && Number(orderFeeRate) === 0) {
+              feeEnabled = false;
+            } else {
+              // 历史订单（无 fee_rate 字段）→ fallback 到当前 config 或默认 5%
+              try {
+                const channel = db.prepare(
+                  "SELECT * FROM card_channels WHERE channel_code = 'COINPAL' AND status = 1"
+                ).get() as any;
+                if (channel && channel.config_json) {
+                  const cfg = JSON.parse(channel.config_json);
+                  if (cfg.depositFeeEnabled !== false) {
+                    feeEnabled = true;
+                    feeRate = Number(cfg.depositFeeRate || 0.05);
+                  }
+                } else {
+                  feeEnabled = true;
+                  feeRate = 0.05;
                 }
-                if (cfg.depositFeeRate != null) {
-                  feeRate = Number(cfg.depositFeeRate);
-                }
+              } catch (_) {
+                feeEnabled = true;
+                feeRate = 0.05;
               }
-            } catch (_) { /* use defaults */ }
+            }
 
-            // 计算手续费和净额
+            // 计算手续费和净额（toFixed 6 避免浮点误差）
             const feeAmount = feeEnabled ? Number((grossAmount * feeRate).toFixed(6)) : 0;
             const netAmount = Number((grossAmount - feeAmount).toFixed(6));
 
-            // 更新订单手续费字段
+            // 更新订单手续费字段（COALESCE 保护以免覆盖已写入的值）
             const database = getDb();
             database.run(
               `UPDATE usdt_orders SET
-                gross_amount = ?, fee_rate = ?, fee_amount = ?, net_amount = ?,
+                gross_amount = COALESCE(gross_amount, ?),
+                fee_rate = COALESCE(fee_rate, ?),
+                fee_amount = ?, net_amount = ?,
                 updated_at = ?
               WHERE order_no = ?`,
               [grossAmount, feeRate, feeAmount, netAmount, now, orderNo]
             );
+            saveDatabase();
 
             // 写入 wallet.balance_usdt（只加净额）
             const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
@@ -197,7 +214,6 @@ router.post('/notify', async (req, res) => {
                 .run(userId, netAmount);
             }
             const balanceAfter = Number((balanceBefore + netAmount).toFixed(6));
-            saveDatabase();
 
             // 写入钱包流水（DEPOSIT_USDT 用户到账）
             db.prepare(`

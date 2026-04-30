@@ -362,14 +362,18 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
           orderDescription: `CardGoLink USDT Deposit #${orderNo}`,
         });
 
-        // 保存订单到数据库
+        // 保存订单到数据库（含创建时的 fee_rate，锁定费率防中途修改）
         const coinpalRef = result.reference || '';  // CoinPal 平台订单号 (CWSxxx)
+        const orderFeeRate = (channel.config as any)?.depositFeeEnabled !== false
+          ? ((channel.config as any)?.depositFeeRate || 0.05)
+          : 0;
         const dbResult = db.prepare(`
           INSERT INTO usdt_orders (
             order_no, user_id, amount_usdt, amount_usd, exchange_rate,
             network, pay_address, status, coinpal_order_no, coinpal_reference,
+            gross_amount, fee_rate,
             expire_at
-          ) VALUES (?, ?, ?, ?, 1.0, ?, ?, 0, ?, ?, datetime('now', '+2 hours'))
+          ) VALUES (?, ?, ?, ?, 1.0, ?, ?, 0, ?, ?, ?, ?, datetime('now', '+2 hours'))
         `).run(
           orderNo,
           userId,
@@ -379,6 +383,8 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
           result.paymentUrl, // CoinPal 用 paymentUrl 作为 pay_address（展示给用户跳转）
           orderNo,           // coinpal_order_no: 我们系统的商户订单号 (DPxxx)
           coinpalRef,        // coinpal_reference: CoinPal 平台订单号 (CWSxxx)，用于 queryOrder gcid
+          amountUsdt,        // gross_amount: 创建时预估
+          orderFeeRate,      // fee_rate: 锁定创建时的费率
         );
 
         // 安全日志：记录关键字段，不输出密钥，paymentUrl 截断
