@@ -15,6 +15,7 @@ import billRoutes from './routes/bills';
 import noticeRoutes from './routes/notices';
 import walletRoutes, { initWalletTables } from './routes/client-wallet';
 import uploadRoutes from './routes/upload';
+import clientDashboardRoutes from './routes/client-dashboard';
 
 // 管理员路由
 import adminAuthRoutes from './routes/admin-auth';
@@ -77,6 +78,7 @@ app.use('/api/v1/bills', billRoutes);
 app.use('/api/v1/notices', noticeRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/upload', uploadRoutes);
+app.use('/api/v1/dashboard', clientDashboardRoutes);
 
 // ── 管理员 API ────────────────────────────────────────────────
 app.use('/api/admin/auth', adminAuthRoutes);
