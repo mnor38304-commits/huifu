@@ -107,5 +107,6 @@ export const createWalletConvert = (data: any, idempotencyKey?: string) =>
     headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
   })
 export const getConversionRecords = (params: any) => api.get('/wallet/convert/records', { params })
+export const getDepositConfig = () => api.get('/wallet/deposit/config')
 
 export default api

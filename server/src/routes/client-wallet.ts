@@ -19,6 +19,10 @@ export const initWalletTables = () => {
       `ALTER TABLE usdt_orders ADD COLUMN paid_amount DECIMAL(20,8) DEFAULT 0`,
       `ALTER TABLE usdt_orders ADD COLUMN channel_order_no VARCHAR(200)`,
       `ALTER TABLE usdt_orders ADD COLUMN confirmed_at DATETIME`,
+      `ALTER TABLE usdt_orders ADD COLUMN gross_amount DECIMAL(20,8)`,
+      `ALTER TABLE usdt_orders ADD COLUMN fee_rate DECIMAL(10,6)`,
+      `ALTER TABLE usdt_orders ADD COLUMN fee_amount DECIMAL(20,8)`,
+      `ALTER TABLE usdt_orders ADD COLUMN net_amount DECIMAL(20,8)`,
     ];
     for (const sql of migrations) {
       try { database.run(sql); } catch (_) { /* 列可能已存在 */ }
@@ -114,6 +118,27 @@ router.get('/stats', authMiddleware, (req: AuthRequest, res) => {
       totalDeposited: rows.total_deposited || 0,
       depositCount: rows.deposit_count || 0,
     },
+      timestamp: Date.now(),
+  });
+});
+
+// ── 充值配置（手续费率等） ──────────────────────────────────────────
+router.get('/deposit/config', authMiddleware, (req: AuthRequest, res) => {
+  const channel = db.prepare(
+    "SELECT config_json FROM card_channels WHERE UPPER(channel_code) = 'COINPAL' AND status = 1"
+  ).get() as any;
+  let feeRate = 0.05;
+  let feeEnabled = true;
+  if (channel && channel.config_json) {
+    try {
+      const cfg = JSON.parse(channel.config_json);
+      if (cfg.depositFeeEnabled === false) feeEnabled = false;
+      if (cfg.depositFeeRate != null) feeRate = Number(cfg.depositFeeRate);
+    } catch (_) {}
+  }
+  res.json({
+    code: 0,
+    data: { feeRate: feeEnabled ? feeRate : 0, feeEnabled },
     timestamp: Date.now(),
   });
 });
@@ -380,6 +405,16 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
             channel: 'COINPAL',
             // 前端直接跳转至此 URL 完成充值
             cashierUrl: result.paymentUrl,
+            // 手续费信息
+            feeRate: (channel.config as any)?.depositFeeEnabled !== false
+              ? ((channel.config as any)?.depositFeeRate || 0.05)
+              : 0,
+            estimatedFee: (channel.config as any)?.depositFeeEnabled !== false
+              ? Number((((channel.config as any)?.depositFeeRate || 0.05) * Number(amountUsdt)).toFixed(6))
+              : 0,
+            estimatedArrival: (channel.config as any)?.depositFeeEnabled !== false
+              ? Number((Number(amountUsdt) - ((channel.config as any)?.depositFeeRate || 0.05) * Number(amountUsdt)).toFixed(6))
+              : Number(amountUsdt),
           },
           timestamp: Date.now(),
         });

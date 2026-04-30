@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Card, Row, Col, Statistic, Table, Button, Modal, Form, Input, InputNumber, Select, Tag, Space, message, Alert, QRCode, Tabs, Empty, Spin, Steps } from 'antd';
 import { SwapOutlined, WalletOutlined, QrcodeOutlined, HistoryOutlined, CopyOutlined, CheckCircleOutlined, SyncOutlined, LoadingOutlined, LinkOutlined } from '@ant-design/icons';
-import { getWalletInfo, getWalletStats, getDepositList, checkDepositStatus, createWalletConvert, getConversionRecords } from '../services/api';
+import { getWalletInfo, getWalletStats, getDepositList, checkDepositStatus, createWalletConvert, getConversionRecords, getDepositConfig } from '../services/api';
 
 const { TabPane } = Tabs;
 
@@ -36,6 +36,10 @@ export default function Wallet() {
   const [convertForm] = Form.useForm();
   const [convertResult, setConvertResult] = useState<any>(null);
   const [conversionList, setConversionList] = useState<any[]>([]);
+
+  // 手续费显示（默认 5%）
+  const [depositFeeRate, setDepositFeeRate] = useState(0.05);
+  const [depositAmount, setDepositAmount] = useState<number>(0);
 
   // ── 加载钱包信息 ────────────────────────────────────────────────
   const loadWallet = async () => {
@@ -246,7 +250,14 @@ export default function Wallet() {
           }}>
             兑换 USD
           </Button>
-          <Button type="primary" icon={<QrcodeOutlined />} onClick={() => setDepositModal(true)}>
+          <Button type="primary" icon={<QrcodeOutlined />} onClick={async () => {
+            setDepositModal(true);
+            setDepositAmount(0);
+            try {
+              const cfg: any = await getDepositConfig();
+              if (cfg.code === 0) setDepositFeeRate(cfg.data.feeRate || 0.05);
+            } catch (_) { setDepositFeeRate(0.05); }
+          }}>
             充值 USDT
           </Button>
         </Space>
@@ -315,7 +326,12 @@ export default function Wallet() {
       >
         <Form form={depositForm} layout="vertical" onFinish={handleCreateDeposit}>
           <Form.Item label="充值金额 (USDT)" name="amount" rules={[{ required: true, message: '请输入充值金额' }]}>
-            <Input type="number" placeholder="请输入 USDT 数量，如 100" min={1} />
+            <Input type="number" placeholder="请输入 USDT 数量，如 100" min={1}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value) || 0;
+                setDepositAmount(val);
+              }}
+            />
           </Form.Item>
           <Form.Item label="网络" name="network" initialValue="TRC20">
             <Select>
@@ -324,6 +340,26 @@ export default function Wallet() {
               <Select.Option value="BEP20">BEP20 (BNB Chain)</Select.Option>
             </Select>
           </Form.Item>
+          {/* 手续费展示 */}
+          {depositAmount > 0 && depositFeeRate > 0 && (
+            <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Statistic title="手续费率" value={`${(depositFeeRate * 100).toFixed(1)}%`} valueStyle={{ fontSize: 18 }} />
+                </Col>
+                <Col span={8}>
+                  <Statistic title="手续费" value={(depositAmount * depositFeeRate).toFixed(2)} suffix="USDT" valueStyle={{ fontSize: 18, color: '#faad14' }} />
+                </Col>
+                <Col span={8}>
+                  <Statistic title="预计到账" value={(depositAmount - depositAmount * depositFeeRate).toFixed(2)} prefix="~" suffix="USDT" valueStyle={{ fontSize: 18, color: '#52c41a' }} />
+                </Col>
+              </Row>
+              <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>实际到账以 CoinPal 支付成功金额和链上确认为准</div>
+            </Card>
+          )}
+          {depositFeeRate === 0 && depositAmount > 0 && (
+            <Alert message="当前充值免手续费" type="success" style={{ marginBottom: 16 }} />
+          )}
           <Form.Item>
             <Button type="primary" htmlType="submit" block size="large" loading={depositLoading}>
               {depositLoading ? '创建订单中...' : '发起充值'}

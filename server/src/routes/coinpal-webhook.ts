@@ -151,27 +151,69 @@ router.post('/notify', async (req, res) => {
       // 7. 充值成功且确实是从 0→1 更新 → 才给用户钱包加款
       if (isSuccess && didUpdate && order.user_id) {
         const userId = order.user_id;
-        const creditAmount = paidAmount ? parseFloat(paidAmount) : parseFloat(order.amount_usdt);
-        if (creditAmount > 0 && Number.isFinite(creditAmount)) {
+        const grossAmount = paidAmount ? parseFloat(paidAmount) : parseFloat(order.amount_usdt);
+        if (grossAmount > 0 && Number.isFinite(grossAmount)) {
           try {
+            // 读取手续费配置（从 COINPAL config_json）
+            let feeRate = 0.05; // 默认 5%
+            let feeEnabled = true;
+            try {
+              const channel = db.prepare(
+                "SELECT * FROM card_channels WHERE channel_code = 'COINPAL' AND status = 1"
+              ).get() as any;
+              if (channel && channel.config_json) {
+                const cfg = JSON.parse(channel.config_json);
+                if (cfg.depositFeeEnabled === false) {
+                  feeEnabled = false;
+                }
+                if (cfg.depositFeeRate != null) {
+                  feeRate = Number(cfg.depositFeeRate);
+                }
+              }
+            } catch (_) { /* use defaults */ }
+
+            // 计算手续费和净额
+            const feeAmount = feeEnabled ? Number((grossAmount * feeRate).toFixed(6)) : 0;
+            const netAmount = Number((grossAmount - feeAmount).toFixed(6));
+
+            // 更新订单手续费字段
+            const database = getDb();
+            database.run(
+              `UPDATE usdt_orders SET
+                gross_amount = ?, fee_rate = ?, fee_amount = ?, net_amount = ?,
+                updated_at = ?
+              WHERE order_no = ?`,
+              [grossAmount, feeRate, feeAmount, netAmount, now, orderNo]
+            );
+
+            // 写入 wallet.balance_usdt（只加净额）
             const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
             const balanceBefore = wallet ? wallet.balance_usdt : 0;
             if (wallet) {
               db.prepare('UPDATE wallets SET balance_usdt = balance_usdt + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?')
-                .run(creditAmount, userId);
+                .run(netAmount, userId);
             } else {
               db.prepare('INSERT INTO wallets (user_id, balance_usdt, balance_usd, locked_usd) VALUES (?, ?, 0, 0)')
-                .run(userId, creditAmount);
+                .run(userId, netAmount);
             }
-            const balanceAfter = (wallet ? wallet.balance_usdt : 0) + creditAmount;
+            const balanceAfter = Number((balanceBefore + netAmount).toFixed(6));
+            saveDatabase();
 
-            // 写入钱包流水
+            // 写入钱包流水（DEPOSIT_USDT 用户到账）
             db.prepare(`
               INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type)
-              VALUES (?, 'TOPUP', ?, ?, ?, 'USDT', ?, 'usdt_order')
-            `).run(userId, creditAmount, balanceBefore, balanceAfter, `CoinPal 充值到账 订单${orderNo}`);
+              VALUES (?, 'DEPOSIT_USDT', ?, ?, ?, 'USDT', ?, 'usdt_order')
+            `).run(userId, netAmount, balanceBefore, balanceAfter, `CoinPal 充值到账 订单${orderNo}`);
 
-            console.log(`[CoinPal IPN] 用户[${userId}] 钱包到账 ${creditAmount} USDT (${balanceBefore} → ${balanceAfter})`);
+            // 如果收了手续费，再写一条 DEPOSIT_FEE 流水（便于审计）
+            if (feeAmount > 0) {
+              db.prepare(`
+                INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type)
+                VALUES (?, 'DEPOSIT_FEE', ?, ?, ?, 'USDT', ?, 'usdt_order')
+              `).run(userId, -feeAmount, balanceAfter, balanceAfter, `CoinPal 充值手续费 订单${orderNo}`);
+            }
+
+            console.log(`[CoinPal IPN] 用户[${userId}] 充值到账: gross=${grossAmount}, fee=${feeAmount}, net=${netAmount} (${balanceBefore} → ${balanceAfter})`);
           } catch (e: any) {
             console.error('[CoinPal IPN] 钱包加款失败:', e.message);
           }
