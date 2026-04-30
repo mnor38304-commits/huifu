@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import dayjs from 'dayjs'
 import { Card, Descriptions, Button, Modal, Form, Input, Select, message, Spin, Tag, List, DatePicker, Alert, Checkbox, Typography } from 'antd'
-import { getUserInfo, getKycStatus, submitKyc } from '../services/api'
+import { getUserInfo, getKycStatus, submitKyc, changePassword } from '../services/api'
 import { policyDocs, type PolicyDoc } from '../constants/policyDocs'
 
 const { Option } = Select
@@ -16,6 +16,9 @@ const Settings: React.FC = () => {
   const [activePolicy, setActivePolicy] = useState<PolicyDoc | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
+  // 修改密码
+  const [pwdForm] = Form.useForm()
+  const [pwdLoading, setPwdLoading] = useState(false)
 
   const subjectType = Form.useWatch('subjectType', form) || 1
   const currentIdType = Form.useWatch('idType', form) || 1
@@ -110,6 +113,26 @@ const Settings: React.FC = () => {
     ? [{ value: 3, label: '营业执照' }]
     : [{ value: 1, label: '身份证' }, { value: 2, label: '护照' }]
 
+  // ── 修改密码 ─────────────────────────────────────────────────
+  const handleChangePassword = async (values: any) => {
+    setPwdLoading(true)
+    try {
+      const res: any = await changePassword(values.oldPassword, values.newPassword)
+      if (res.code === 0) {
+        message.success('密码修改成功，请重新登录')
+        pwdForm.resetFields()
+        // 强制退出登录
+        setTimeout(() => window.location.href = '/login', 1500)
+      } else {
+        message.error(res.message)
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.message || '修改失败')
+    } finally {
+      setPwdLoading(false)
+    }
+  }
+
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>
   }
@@ -186,6 +209,60 @@ const Settings: React.FC = () => {
             </List.Item>
           )}
         />
+      </Card>
+
+      {/* 修改密码 */}
+      <Card title="修改密码" style={{ marginBottom: 16 }}>
+        <Form form={pwdForm} layout="vertical" onFinish={handleChangePassword} style={{ maxWidth: 400 }}>
+          <Form.Item
+            name="oldPassword"
+            label="当前密码"
+            rules={[{ required: true, message: '请输入当前密码' }]}
+          >
+            <Input.Password placeholder="输入当前密码" />
+          </Form.Item>
+          <Form.Item
+            name="newPassword"
+            label="新密码"
+            rules={[
+              { required: true, message: '请输入新密码' },
+              { min: 8, message: '新密码至少需要8位' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (value && getFieldValue('oldPassword') === value) {
+                    return Promise.reject(new Error('新密码不能与当前密码相同'));
+                  }
+                  return Promise.resolve();
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="至少8位新密码" />
+          </Form.Item>
+          <Form.Item
+            name="confirmPassword"
+            label="确认新密码"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: '请确认新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('两次输入的密码不一致'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="再次输入新密码" />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" loading={pwdLoading}>
+              保存新密码
+            </Button>
+          </Form.Item>
+        </Form>
       </Card>
 
       <Modal title="实名认证" open={kycModalVisible} onCancel={() => setKycModalVisible(false)} footer={null} width={640} destroyOnHidden>

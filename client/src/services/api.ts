@@ -109,4 +109,15 @@ export const createWalletConvert = (data: any, idempotencyKey?: string) =>
 export const getConversionRecords = (params: any) => api.get('/wallet/convert/records', { params })
 export const getDepositConfig = () => api.get('/wallet/deposit/config')
 
+// ── Account ──────────────────────────────────────────────────────────────────
+export const changePassword = (oldPassword: string, newPassword: string) =>
+  api.post('/auth/change-password', { oldPassword, newPassword })
+
+// ── Dashboard Analytics ──────────────────────────────────────────────────────
+export const getDashboardOverview = (params: any) => api.get('/dashboard/overview', { params })
+export const getTransactionTrend = (params: any) => api.get('/dashboard/transaction-trend', { params })
+export const getStatusBreakdown = (params: any) => api.get('/dashboard/status-breakdown', { params })
+export const getFailureReasons = (params: any) => api.get('/dashboard/failure-reasons', { params })
+export const getRecentTransactions = (params: any) => api.get('/dashboard/recent-transactions', { params })
+
 export default api
