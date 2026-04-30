@@ -367,6 +367,50 @@ router.post('/reset-password', async (req, res: Response<ApiResponse>) => {
   res.json({ code: 0, message: '密码重置成功', timestamp: Date.now() });
 });
 
+// ── 修改密码（登录用户） ──────────────────────────────────────────
+router.post('/change-password', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.json({ code: 401, message: '未登录', timestamp: Date.now() });
+  }
+
+  const { oldPassword, newPassword } = req.body;
+
+  if (!oldPassword || !newPassword) {
+    return res.json({ code: 400, message: '请填写当前密码和新密码', timestamp: Date.now() });
+  }
+  if (newPassword.length < 8) {
+    return res.json({ code: 400, message: '新密码至少需要8位', timestamp: Date.now() });
+  }
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as User | undefined;
+  if (!user) {
+    return res.json({ code: 404, message: '用户不存在', timestamp: Date.now() });
+  }
+
+  const isMatch = await new Promise<boolean>((resolve) => {
+    bcrypt.compare(oldPassword, user.password_hash, (err, result) => {
+      resolve(!err && result);
+    });
+  });
+  if (!isMatch) {
+    return res.json({ code: 400, message: '当前密码错误', timestamp: Date.now() });
+  }
+
+  if (oldPassword === newPassword) {
+    return res.json({ code: 400, message: '新密码不能与当前密码相同', timestamp: Date.now() });
+  }
+
+  const salt = bcrypt.genSaltSync(12);
+  const passwordHash = bcrypt.hashSync(newPassword, salt);
+  db.prepare('UPDATE users SET password_hash = ?, salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(passwordHash, salt, userId);
+
+  console.log(`[Auth] 用户 ${userId} 密码已修改`);
+
+  res.json({ code: 0, message: '密码修改成功', timestamp: Date.now() });
+});
+
 // 退出登录
 router.post('/logout', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   // ✅ FIX: 退出时清除 httpOnly Cookie，后端主动失效
