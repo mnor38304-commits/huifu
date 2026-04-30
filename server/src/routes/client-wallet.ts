@@ -29,30 +29,9 @@ export const initWalletTables = () => {
   }
 };
 
-// ── 渠道 SDK 工厂 ──────────────────────────────────────────────────────────
+// ── 渠道 SDK 工厂（USDT 钱包充值专用）─────────────────────────────────────
 async function getWalletChannelSDK() {
-  // 1. UQPay 渠道（优先级最高）
-  const uqpayChannel = db.prepare(
-    "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'UQPAY' AND status = 1"
-  ).get() as any;
-  if (uqpayChannel) {
-    let config: Record<string, any> = {};
-    try {
-      config = JSON.parse(uqpayChannel.config_json || '{}');
-    } catch (_) {}
-    const { UqPaySDK } = await import('../channels/uqpay');
-    const sdk = new UqPaySDK({
-      clientId: config.clientId || uqpayChannel.api_key || '',
-      apiKey: config.apiSecret || uqpayChannel.api_secret || '',
-      baseUrl: uqpayChannel.api_base_url || undefined,
-    });
-    if (config.depositAddresses) {
-      (sdk as any)._platformDepositAddresses = config.depositAddresses;
-    }
-    return { type: 'uqpay' as const, sdk, channel: uqpayChannel };
-  }
-
-  // 2. CoinPal 渠道（收银台模式）
+  // 1. CoinPal 收银台模式（优先）
   const coinpalChannel = db.prepare(
     "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'COINPAL' AND status = 1"
   ).get() as any;
@@ -68,13 +47,13 @@ async function getWalletChannelSDK() {
         secretKey: config.secretKey || coinpalChannel.api_secret || '',
         apiBaseUrl: coinpalChannel.api_base_url || undefined,
       });
-      return { type: 'coinpal' as const, sdk, channel: coinpalChannel };
+      return { type: 'coinpal' as const, sdk, channel: coinpalChannel, config };
     } catch (err: any) {
       console.error('[Wallet] CoinPal SDK 加载失败:', err.message);
     }
   }
 
-  // 3. DogPay 渠道（最后兜底）
+  // 2. DogPay 地址模式（备用）
   const dogpayChannel = db.prepare(
     "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay' AND status = 1"
   ).get() as any;
@@ -405,7 +384,16 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
           timestamp: Date.now(),
         });
       } catch (err: any) {
-        console.error('[Wallet/CoinPal] createOrder error:', err.message);
+        const msg = String(err?.message || '');
+        console.error('[Wallet/CoinPal] createOrder error:', msg);
+        // 区分 CoinPal 未配置 vs API 调用失败
+        if (msg.includes('merchantNo') || msg.includes('secretKey') || msg.includes('CoinPal') === false) {
+          return res.json({
+            code: 503,
+            message: 'CoinPal 收银台未配置，请联系管理员',
+            timestamp: Date.now(),
+          });
+        }
         return res.json({
           code: 503,
           message: '充值通道暂不可用，请稍后重试',
@@ -415,57 +403,7 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
     }
 
     // ══════════════════════════════════════════════════════════
-    // 方式二：UQPay 直接地址模式
-    // ══════════════════════════════════════════════════════════
-    if (channel?.type === 'uqpay' && channel.sdk) {
-      try {
-        const sdk = channel.sdk;
-        const orderResult: any = await sdk.createC2COrder({
-          amount: Number(amountUsdt),
-          token: 'USDT',
-          network: chain,
-          userId: String(userId),
-        });
-        const payAddress = orderResult.payAddress;
-        const uqpayOrderId = orderResult.orderId;
-        const expireAt = orderResult.expireAt;
-
-        const dbResult = db.prepare(`
-          INSERT INTO usdt_orders (
-            order_no, user_id, amount_usdt, amount_usd, exchange_rate,
-            network, pay_address, status, uqpay_order_id, expire_at
-          ) VALUES (?, ?, ?, ?, 1.0, ?, ?, 0, ?, ?)
-        `).run(orderNo, userId, amountUsdt, amountUsdt, network, payAddress, uqpayOrderId, expireAt);
-
-        return res.json({
-          code: 0,
-          data: {
-            orderId: dbResult.lastInsertRowid,
-            orderNo,
-            amountUsdt,
-            amountUsd: amountUsdt,
-            exchangeRate: 1.0,
-            network,
-            payAddress,
-            expireAt,
-            channel: 'UQPAY',
-          },
-          timestamp: Date.now(),
-        });
-      } catch (err: any) {
-        console.error('[Wallet/UQPay] createC2COrder error:', err.message);
-        return res.json({
-          code: 503,
-          message: err.message.includes('config_json') || err.message.includes('配置')
-            ? '平台充值地址未配置，请联系管理员'
-            : '充值通道暂不可用，请稍后重试',
-          timestamp: Date.now(),
-        });
-      }
-    }
-
-    // ══════════════════════════════════════════════════════════
-    // 方式三：DogPay 地址模式（兜底）
+    // 方式二：DogPay 地址模式（备用）
     // ══════════════════════════════════════════════════════════
     if (channel?.type === 'dogpay' && channel.sdk) {
       try {
@@ -507,7 +445,7 @@ router.post('/deposit/c2c', authMiddleware, async (req: AuthRequest, res) => {
     // 无可用渠道
     return res.json({
       code: 503,
-      message: '充值通道暂不可用，请稍后重试',
+      message: 'CoinPal 收银台未配置，请联系管理员',
       timestamp: Date.now(),
     });
   } catch (err: any) {
