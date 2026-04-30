@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, Row, Col, Statistic, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Alert, QRCode, Tabs, Empty, Spin, Steps } from 'antd';
+import { Card, Row, Col, Statistic, Table, Button, Modal, Form, Input, InputNumber, Select, Tag, Space, message, Alert, QRCode, Tabs, Empty, Spin, Steps } from 'antd';
 import { SwapOutlined, WalletOutlined, QrcodeOutlined, HistoryOutlined, CopyOutlined, CheckCircleOutlined, SyncOutlined, LoadingOutlined, LinkOutlined } from '@ant-design/icons';
 import { getWalletInfo, getWalletStats, getDepositList, checkDepositStatus, createWalletConvert, getConversionRecords } from '../services/api';
 
@@ -58,8 +58,8 @@ export default function Wallet() {
     try {
       const r: any = await getDepositList({ page, pageSize });
       if (r.code === 0) {
-        setDepositList(r.data.list);
-        setTotal(r.data.total);
+        setDepositList(Array.isArray(r.data?.list) ? r.data.list : []);
+        setTotal(r.data?.total || 0);
       }
     } catch (e) { console.error(e); }
   };
@@ -189,7 +189,11 @@ export default function Wallet() {
   const loadConversionRecords = async () => {
     try {
       const r: any = await getConversionRecords({ page: 1, pageSize: 5 });
-      if (r.code === 0) setConversionList(r.data.list || []);
+      if (r.code === 0) {
+        // 兼容两种返回结构：{ data: [...] } 或 { data: { list: [...] } }
+        const records = Array.isArray(r.data) ? r.data : (r.data?.list || []);
+        setConversionList(records);
+      }
     } catch (e) { /* ignore */ }
   };
 
