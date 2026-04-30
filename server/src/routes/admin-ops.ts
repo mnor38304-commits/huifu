@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import db from '../db';
-import { adminAuth } from './admin-auth';
+import db, { saveDatabase } from '../db';
+import { adminAuth, writeAdminLog, AdminRequest } from './admin-auth';
 
 const router = Router();
 
@@ -118,6 +118,63 @@ router.get('/logs', adminAuth, (req, res) => {
     'SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT ? OFFSET ?'
   ).all(Number(pageSize), (Number(page) - 1) * Number(pageSize));
   res.json({ code: 0, data: { list, total }, timestamp: Date.now() });
+});
+
+// ── USDT 充值手续费配置 ─────────────────────────────────────────
+router.get('/deposit-fee-config', adminAuth, (req, res) => {
+  const channel = db.prepare(
+    "SELECT config_json FROM card_channels WHERE UPPER(channel_code) = 'COINPAL' AND status = 1"
+  ).get() as any;
+  let feeRate = 0.05;
+  let feeEnabled = true;
+  if (channel && channel.config_json) {
+    try {
+      const cfg = JSON.parse(channel.config_json);
+      if (cfg.depositFeeEnabled === false) feeEnabled = false;
+      if (cfg.depositFeeRate != null) feeRate = Number(cfg.depositFeeRate);
+    } catch (_) {}
+  }
+  res.json({
+    code: 0,
+    data: { feeRate, feeEnabled, provider: 'COINPAL' },
+    timestamp: Date.now(),
+  });
+});
+
+router.put('/deposit-fee-config', adminAuth, (req: AdminRequest, res) => {
+  const { feeRate, feeEnabled } = req.body;
+  if (feeRate != null && (isNaN(feeRate) || feeRate < 0 || feeRate > 0.2)) {
+    return res.json({ code: 400, message: '手续费比例必须在 0~0.2 之间（如 0.05 = 5%，最高 20%）' });
+  }
+  const channel = db.prepare(
+    "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'COINPAL' AND status = 1"
+  ).get() as any;
+  if (!channel) {
+    return res.json({ code: 404, message: 'COINPAL 渠道未配置' });
+  }
+  let cfg: Record<string, any> = {};
+  try { cfg = JSON.parse(channel.config_json || '{}'); } catch (_) {}
+  if (feeRate != null) cfg.depositFeeRate = Number(feeRate);
+  if (feeEnabled != null) cfg.depositFeeEnabled = Boolean(feeEnabled);
+  db.prepare(
+    'UPDATE card_channels SET config_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(JSON.stringify(cfg), channel.id);
+  if (req.admin) {
+    writeAdminLog({
+      adminId: req.admin.id,
+      adminName: req.admin.username,
+      action: 'UPDATE_DEPOSIT_FEE',
+      targetType: 'card_channels',
+      targetId: channel.id,
+      detail: `feeRate=${cfg.depositFeeRate ?? 0.05}, feeEnabled=${cfg.depositFeeEnabled ?? true}`,
+    });
+  }
+  res.json({
+    code: 0,
+    message: 'USDT 充值手续费配置已更新（需 PM2 restart 生效）',
+    data: { depositFeeRate: cfg.depositFeeRate ?? 0.05, depositFeeEnabled: cfg.depositFeeEnabled ?? true },
+    timestamp: Date.now(),
+  });
 });
 
 export default router;
