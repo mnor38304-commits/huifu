@@ -1,6 +1,5 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import db from '../db';
 import { authMiddleware, generateToken, AuthRequest, setAuthCookie, clearAuthCookie } from '../middleware/auth';
 import { ApiResponse, User } from '../types';
