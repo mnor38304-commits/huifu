@@ -4,7 +4,7 @@ import {
   Button, Space, Spin, message, Empty, Row, Col, Tooltip,
 } from 'antd';
 import {
-  SearchOutlined, ReloadOutlined, EyeOutlined,
+  SearchOutlined, ReloadOutlined, EyeOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import VirtualCard from './VirtualCard';
 import { getCardEnhancedDetail, getCardTransactions, getCardOperations, revealCard } from '../services/api';
@@ -182,6 +182,38 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
     }
   };
 
+  // ── Copy handlers ──
+  const copyText = async (text: string, label: string) => {
+    if (!text || text.includes('*')) {
+      message.warning(`${label}未显示，无法复制`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      message.success(`${label}已复制`);
+    } catch {
+      message.error(`${label}复制失败，请手动复制`);
+    }
+  };
+
+  const copyAllCardInfo = async () => {
+    if (!revealedCardNo || !revealedExpiry || !revealedCvv) {
+      message.warning('请先查看完整卡信息');
+      return;
+    }
+    const text = [
+      `卡号：${revealedCardNo}`,
+      `有效期：${revealedExpiry}`,
+      `CVV：${revealedCvv}`,
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      message.success('卡号、有效期、CVV 已复制');
+    } catch {
+      message.error('复制失败，请手动复制');
+    }
+  };
+
   // ── Filter handlers ──
   const handleDateChange = (_: any, dateStrings: [string, string]) => {
     setTxnFilters(prev => ({ ...prev, startDate: dateStrings[0] || '', endDate: dateStrings[1] || '' }));
@@ -291,6 +323,25 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                     </Button>
                   </Space>
                 </div>
+                {/* ── Copy buttons (only when revealed) ── */}
+                {isRevealed && (
+                  <div style={{ textAlign: 'center', marginTop: 8 }}>
+                    <Space wrap>
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(revealedCardNo || '', '卡号')}>
+                        复制卡号
+                      </Button>
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(revealedExpiry || '', '有效期')}>
+                        复制有效期
+                      </Button>
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(revealedCvv || '', 'CVV')}>
+                        复制 CVV
+                      </Button>
+                      <Button size="small" type="primary" icon={<CopyOutlined />} onClick={copyAllCardInfo}>
+                        一键复制全部
+                      </Button>
+                    </Space>
+                  </div>
+                )}
               </Col>
               <Col xs={24} sm={14}>
                 <Descriptions column={3} size="small" bordered style={{ marginTop: 4 }}>
