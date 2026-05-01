@@ -74,7 +74,7 @@ export class GeoSdk {
 
   private fmtPublicKey(raw: string): string {
     let k = raw.replace(/-----BEGIN .*? KEY-----/g, '').replace(/-----END .*? KEY-----/g, '').replace(/\s+/g, '');
-    return '-----BEGIN RSA PUBLIC KEY-----\n' + (k.match(/.{1,64}/g)?.join('\n') || k) + '\n-----END RSA PUBLIC KEY-----';
+    return '-----BEGIN PUBLIC KEY-----\n' + (k.match(/.{1,64}/g)?.join('\n') || k) + '\n-----END PUBLIC KEY-----';
   }
 
   // ── RSA 分块加密 ─────────────────────────────────────────────────────────
