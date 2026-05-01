@@ -362,6 +362,10 @@ export async function initDatabase(): Promise<Database> {
     try { db.run("ALTER TABLE cardholders ADD COLUMN provider_response_json TEXT"); } catch (_) {}
     // 卡片备注字段（幂等迁移）
     try { db.run("ALTER TABLE cards ADD COLUMN remark TEXT"); } catch (_) {}
+    // 持卡人地址字段（幂等迁移）
+    try { db.run("ALTER TABLE cardholders ADD COLUMN address_line1 TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE cardholders ADD COLUMN city TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE cardholders ADD COLUMN state TEXT"); } catch (_) {}
   } catch (e) {}
 
   saveDatabase();

@@ -20,20 +20,13 @@ const FIELDS: FieldSchema[] = [
   { name: 'email', label: '邮箱', type: 'email', required: true, placeholder: 'john@example.com', example: 'john@example.com', maxLength: 100 },
   { name: 'phone', label: '手机号', type: 'tel', required: true, placeholder: '1234567890', example: '1234567890', minLength: 6, maxLength: 20, description: '纯数字，6-20 位，提交时自动去除 + 前缀' },
   { name: 'countryCode', label: '国家码', type: 'text', required: false, defaultValue: 'US', placeholder: 'US', example: 'US', minLength: 2, maxLength: 2, description: '2 位大写 ISO 国家码' },
-  {
-    name: 'idType', label: '证件类型', type: 'select', required: false, defaultValue: 0,
-    options: [
-      { value: 0, label: '身份证' },
-      { value: 1, label: '护照' },
-      { value: 2, label: '驾照' },
-    ],
-    example: '1',
-  },
-  { name: 'idNumber', label: '证件号', type: 'password', required: false, placeholder: '选填', example: 'P123456789', minLength: 4, maxLength: 64, description: '选填，4-64 位，不落库明文' },
+  { name: 'addressLine1', label: '详细地址', type: 'text', required: true, placeholder: '123 Main Street', example: '123 Main Street', minLength: 2, maxLength: 200 },
+  { name: 'city', label: '城市', type: 'text', required: true, placeholder: 'New York', example: 'New York', minLength: 1, maxLength: 100 },
+  { name: 'state', label: '州/省', type: 'text', required: true, placeholder: 'NY', example: 'NY', minLength: 1, maxLength: 100 },
 ];
 
-const CSV_HEADER = 'firstName,lastName,email,phone,countryCode,idType,idNumber';
-const CSV_EXAMPLE = 'John,Doe,john@example.com,1234567890,US,1,P123456789';
+const CSV_HEADER = 'firstName,lastName,email,phone,countryCode,addressLine1,city,state';
+const CSV_EXAMPLE = 'John,Doe,john@example.com,1234567890,US,123 Main Street,New York,NY';
 
 // ── 工具: 脱敏 ────────────────────────────────────────────────────────────────
 
@@ -97,18 +90,14 @@ function validateCountryCode(cc: string): string[] {
   return errs;
 }
 
-function validateIdType(t: any): string[] {
+function validateAddressField(val: string, field: string, minLen: number, maxLen: number): string[] {
   const errs: string[] = [];
-  if (t == null) return errs;
-  const n = Number(t);
-  if (![0, 1, 2].includes(n)) errs.push('idType 只能为 0(身份证) / 1(护照) / 2(驾照)');
-  return errs;
-}
-
-function validateIdNumber(id?: string): string[] {
-  const errs: string[] = [];
-  if (!id || !id.trim()) return errs;
-  if (id.length < 4 || id.length > 64) errs.push('idNumber 长度需在 4-64 之间');
+  if (!val || !val.trim()) errs.push(`${field} 不能为空`);
+  else if (val.trim().length < minLen) errs.push(`${field} 至少需要 ${minLen} 个字符`);
+  else if (val.trim().length > maxLen) errs.push(`${field} 不能超过 ${maxLen} 个字符`);
+  else if (/<[^>]*>|javascript:|on\w+=/i.test(val)) errs.push(`${field} 包含非法内容`);
+  else if (/\n|\r/.test(val)) errs.push(`${field} 不能包含换行符`);
+  else if (/^[^a-zA-Z0-9]+$/.test(val.trim())) errs.push(`${field} 不能仅为特殊符号`);
   return errs;
 }
 
@@ -157,21 +146,28 @@ export const dogpayCardholderAdapter: CardholderAdapter = {
     const email = (input.email || '').trim();
     const phone = (input.phone || '').trim();
     const countryCode = (input.countryCode || 'US').trim().toUpperCase();
-    const idType = input.idType != null && input.idType !== '' ? Number(input.idType) : 0;
-    const idNumber = (input.idNumber || '').trim();
+    const addressLine1 = (input.addressLine1 || '').trim();
+    const city = (input.city || '').trim();
+    const state = (input.state || '').trim();
+
+    // 如果旧字段 idType/idNumber 被传入且新地址字段为空，给出提示
+    if (!addressLine1 && (input.idType != null || input.idNumber)) {
+      errors.push(prefix + '模板字段已更新，请下载最新 CSV 模板（idType/idNumber 已替换为 addressLine1/city/state）');
+    }
 
     errors.push(...validateName(firstName, 'firstName').map(e => prefix + e));
     errors.push(...validateName(lastName, 'lastName').map(e => prefix + e));
     errors.push(...validateEmail(email).map(e => prefix + e));
     errors.push(...validatePhone(phone).map(e => prefix + e));
     errors.push(...validateCountryCode(countryCode).map(e => prefix + e));
-    errors.push(...validateIdType(idType).map(e => prefix + e));
-    errors.push(...validateIdNumber(idNumber).map(e => prefix + e));
+    errors.push(...validateAddressField(addressLine1, 'addressLine1', 2, 200).map(e => prefix + e));
+    errors.push(...validateAddressField(city, 'city', 1, 100).map(e => prefix + e));
+    errors.push(...validateAddressField(state, 'state', 1, 100).map(e => prefix + e));
 
     return {
       valid: errors.length === 0,
       errors,
-      data: { firstName, lastName, email, phone, countryCode, idType, idNumber },
+      data: { firstName, lastName, email, phone, countryCode, addressLine1, city, state },
     };
   },
 
@@ -182,8 +178,9 @@ export const dogpayCardholderAdapter: CardholderAdapter = {
       email: (input.email || '').trim(),
       phone: (input.phone || '').trim().replace(/[^0-9]/g, ''),
       countryCode: (input.countryCode || 'US').trim().toUpperCase(),
-      idType: input.idType != null && input.idType !== '' ? Number(input.idType) : 0,
-      idNumber: (input.idNumber || '').trim(),
+      addressLine1: (input.addressLine1 || '').trim(),
+      city: (input.city || '').trim(),
+      state: (input.state || '').trim(),
     };
   },
 
@@ -199,8 +196,9 @@ export const dogpayCardholderAdapter: CardholderAdapter = {
       email: input.email,
       phone: input.phone,
       countryCode: input.countryCode,
-      idType: input.idType,
-      idNumber: input.idNumber || undefined,
+      addressLine1: input.addressLine1,
+      city: input.city,
+      state: input.state,
     });
 
     return {
