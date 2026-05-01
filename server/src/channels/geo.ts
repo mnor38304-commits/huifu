@@ -260,7 +260,7 @@ export class GeoSdk {
   // ── 可用 BIN ─────────────────────────────────────────────────────────
 
   async listBins(): Promise<GeoBin[]> {
-    const data = await this.request<any>('POST', '/cards/bins');
+    const data = await this.request<any>('POST', '/openapi/vcc/cardBin');
     const list = Array.isArray(data) ? data : (data.list || data.data || []);
     return list.map((item: any) => this.normalizeBin(item));
   }
