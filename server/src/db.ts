@@ -355,6 +355,11 @@ export async function initDatabase(): Promise<Database> {
     db.run('CREATE INDEX IF NOT EXISTS idx_cardholders_channel_email ON cardholders(channel_code, email)');
     db.run('CREATE INDEX IF NOT EXISTS idx_cardholders_external_id ON cardholders(external_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_cardholders_status ON cardholders(status)');
+    // 多渠道扩展列（幂等迁移）
+    try { db.run("ALTER TABLE cardholders ADD COLUMN provider_status TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE cardholders ADD COLUMN provider_kyc_status TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE cardholders ADD COLUMN provider_payload_json TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE cardholders ADD COLUMN provider_response_json TEXT"); } catch (_) {}
   } catch (e) {}
 
   saveDatabase();
