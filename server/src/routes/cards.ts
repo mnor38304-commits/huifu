@@ -409,11 +409,12 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         });
       }
       const geoCard = await sdk.createCard({
-        binId: selectedBin.external_bin_id,
+        userId: req.user!.userId,
         cardName,
         cardLimit: Number(creditLimit),
         currency: geoConfig.defaultCurrency || 'USD',
-        userId: req.user!.userId,
+        binRangeId: selectedBin.external_bin_id,
+        validityMonths: geoConfig.defaultCardValidityMonths || 12,
       });
 
       externalId = geoCard.cardId || '';

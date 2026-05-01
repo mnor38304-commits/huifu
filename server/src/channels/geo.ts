@@ -55,12 +55,12 @@ export interface GeoSpendingLimit {
 }
 
 export interface GeoCardCreateParams {
-  binId: string;
+  userId: number;
   cardName: string;
   cardLimit: number;
   currency?: string;
-  userId: number;
-  metadata?: Record<string, string>;
+  binRangeId: string;
+  validityMonths?: number;
 }
 
 export interface GeoCard {
@@ -296,19 +296,32 @@ export class GeoSdk {
   // ── 开卡 ──────────────────────────────────────────────────────────────
 
   async createCard(params: GeoCardCreateParams): Promise<GeoCard> {
+    const now = new Date();
+    const random = Math.random().toString(36).slice(2, 8);
+    const userReqNo = 'geo_' + params.userId + '_' + Date.now() + '_' + random;
+    const y = now.getFullYear();
+    const M = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const startDate = y + '-' + M + '-' + d;
+    const validityMs = (params.validityMonths || 12) * 30 * 24 * 60 * 60 * 1000;
+    const endDt = new Date(now.getTime() + validityMs);
+    const endDate = endDt.getFullYear() + '-' + String(endDt.getMonth() + 1).padStart(2, '0') + '-' + String(endDt.getDate()).padStart(2, '0');
+
     const body: Record<string, unknown> = {
-      binId: params.binId,
-      cardName: params.cardName,
-      cardLimit: params.cardLimit,
-      currency: params.currency || 'USD',
-      cardType: 1, // 1=常规卡(独立额度/SINGLE)，GEO 官方字段
+      userReqNo: userReqNo,
+      localCurrency: params.currency || 'USD',
+      startDate: startDate,
+      endDate: endDate,
+      enableCurrencyCheck: 1,
+      authLimitAmount: params.cardLimit,
+      CardAlias: params.cardName || 'GEO Card',
+      binRangeId: params.binRangeId,
+      channelType: 1,
+      remarkOne: 'user_' + params.userId,
+      remarkTwo: 'sandbox',
     };
 
-    if (params.metadata && Object.keys(params.metadata).length > 0) {
-      body.metadata = params.metadata;
-    }
-
-    const data = await this.request<any>('POST', '/cards', body);
+    const data = await this.request<any>('POST', '/openapi/vcc/card/apply', body);
     return this.normalizeCard(data);
   }
 
