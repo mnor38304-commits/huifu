@@ -65,28 +65,19 @@ export const updateChannel = (id, d) => BASE.put(`/cards/channels/${id}`, toSnak
 // 同步DogPay渠道的BIN
 export const syncDogPayBins = () => BASE.post('/cards/channels/dogpay/sync-bins')
 
-// ── 持卡人管理（DogPay 渠道）────────────────────────────────────────────────
-export const getCardholders = p => BASE.get('/cards/cardholders', { params: p })
-export const getCardholderDetail = (id: number | string) => BASE.get(`/cards/cardholders/${id}`)
-export const createCardholder = d => BASE.post('/cards/cardholders', {
-  firstName: d.firstName,
-  lastName: d.lastName,
-  email: d.email,
-  phone: d.phone || '',
-  countryCode: d.countryCode || 'US',
-  idType: d.idType ?? 0,
-  idNumber: d.idNumber || '',
-})
-export const updateCardholderStatus = (id: number | string, status: 'ACTIVE' | 'DISABLED') =>
-  BASE.put(`/cards/cardholders/${id}/status`, { status })
-export const syncCardholders = () => BASE.post('/cards/cardholders/sync')
+// ── 持卡人管理（独立路由 /api/admin/cardholders）──────────────
+export const getCardholders = p => BASE.get('/cardholders', { params: p })
+export const getCardholderDetail = (id: number | string) => BASE.get(`/cardholders/${id}`)
+export const createCardholder = d => BASE.post('/cardholders', d)
+export const batchValidateCardholders = d => BASE.post('/cardholders/batch/validate', d)
+export const batchCreateCardholders = d => BASE.post('/cardholders/batch/create', d)
+export const downloadCardholderTemplate = () => `/api/admin/cardholders/template/download`
 export const getUsdtOrders = p => BASE.get('/usdt/orders', { params: p })
 export const confirmUsdt = (id, tx) => BASE.post(`/usdt/orders/${id}/confirm`, { txHash: tx })
 export const getUsdtStats = () => BASE.get('/usdt/stats')
-// USDT充值相关
-export const getUsdtAddress = (network: string) => BASE.get('/usdt/address', { params: { network } })
 export const syncUsdtOrder = (id: number) => BASE.post(`/usdt/orders/${id}/sync`)
 export const getUsdtOrderDetail = (id: number) => BASE.get(`/usdt/orders/${id}/detail`)
+export const getUsdtAddress = (network: string) => BASE.get('/usdt/address', { params: { network } })
 export const getTransactions = p => BASE.get('/ops', { params: p })
 export const getTxnStats = () => BASE.get('/ops/stats')
 export const getNotices = () => BASE.get('/ops/notices')
