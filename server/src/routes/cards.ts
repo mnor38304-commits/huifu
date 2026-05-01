@@ -107,6 +107,27 @@ function generateExpireDate(): string {
 
 // ── 可用卡段 ────────────────────────────────────────────────────────────────
 
+/**
+ * 懒冻结：检查并自动冻结已到使用期限的卡片
+ */
+function freezeExpiredCardsForUser(userId: number) {
+  const expired = db.prepare(`
+    SELECT id FROM cards WHERE user_id = ? AND status = 1
+      AND usage_expires_at IS NOT NULL
+      AND usage_expires_at <= datetime('now')
+  `).all(userId) as any[];
+  if (expired.length === 0) return;
+  db.prepare(`
+    UPDATE cards SET status = 2,
+      auto_frozen_at = datetime('now'),
+      auto_frozen_reason = 'USAGE_EXPIRED'
+    WHERE user_id = ? AND status = 1
+      AND usage_expires_at IS NOT NULL
+      AND usage_expires_at <= datetime('now')
+  `).run(userId);
+  saveDatabase();
+}
+
 router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   try {
     const channel = await getChannelSDK();
@@ -127,11 +148,13 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
 // ── 我的卡片列表 ────────────────────────────────────────────────────────────
 
 router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  freezeExpiredCardsForUser(req.user!.userId);
   const { status } = req.query;
 
   let sql = `SELECT id, card_no_masked, card_name, card_type, currency, balance,
     credit_limit, single_limit, daily_limit, status, expire_date, purpose,
-    created_at, bin_id, channel_code
+    created_at, bin_id, channel_code, remark,
+    usage_expires_at, auto_frozen_at, auto_frozen_reason
     FROM cards WHERE user_id = ?`;
   const params: any[] = [req.user!.userId];
 
@@ -334,11 +357,16 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   const insertStatus = (channel.type === 'uqpay' && uqpayCardResult?.card_status &&
     ['PENDING', 'PROCESSING'].includes(uqpayCardResult.card_status.toUpperCase())) ? 0 : 1;
 
+  // 新卡默认使用期限：1个月
+  const defaultUsageExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    .toISOString().replace('T', ' ').slice(0, 19);
+
   const result = db.prepare(`
     INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type,
       currency, balance, credit_limit, single_limit, daily_limit, status, expire_date,
-      cvv, purpose, external_id, channel_code, uqpay_cardholder_id, card_order_id)
-    VALUES (?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      cvv, purpose, external_id, channel_code, uqpay_cardholder_id, card_order_id,
+      usage_expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cardNo,
     masked,
@@ -357,7 +385,8 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     externalId || null,
     channelCode,
     uqpayCardholderId,
-    uqpayCardResult?.card_order_id || null
+    uqpayCardResult?.card_order_id || null,
+    defaultUsageExpiresAt
   );
 
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
@@ -403,10 +432,12 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 // ── 卡片详情 ────────────────────────────────────────────────────────────────
 
 router.get('/:id', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  freezeExpiredCardsForUser(req.user!.userId);
   const card = db.prepare(`
     SELECT id, card_no_masked, card_name, card_type, currency, balance,
       credit_limit, single_limit, daily_limit, status, expire_date, purpose,
-      created_at, channel_code, external_id
+      created_at, channel_code, external_id, remark,
+      usage_expires_at, auto_frozen_at, auto_frozen_reason
     FROM cards WHERE id = ? AND user_id = ?
   `).get(req.params.id, req.user!.userId);
 
@@ -420,6 +451,7 @@ router.get('/:id', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>
 // ── 卡片详情（增强版，含累计消费/累计转入） ─────────────────────────────────
 
 router.get('/:id/detail', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  freezeExpiredCardsForUser(req.user!.userId);
   const card = db.prepare(`
     SELECT c.*, b.country as bin_country
     FROM cards c
@@ -1064,6 +1096,110 @@ router.post('/:id/cancel', authMiddleware, async (req: AuthRequest, res: Respons
 
   db.prepare('UPDATE cards SET status = 4, balance = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
   res.json({ code: 0, message: '卡片已注销', timestamp: Date.now() });
+});
+
+// ── 更新卡片备注 ─────────────────────────────────────────────────────────────
+
+router.patch('/:id/remark', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  const { remark } = req.body;
+  if (typeof remark !== 'string' || remark.length > 100) {
+    return res.json({ code: 400, message: '备注最长 100 字符', timestamp: Date.now() });
+  }
+  if (/<[^>]*>|javascript:|on\w+=/i.test(remark)) {
+    return res.json({ code: 400, message: '备注包含非法内容', timestamp: Date.now() });
+  }
+
+  const card = db.prepare('SELECT id FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId);
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  const trimmed = remark.trim();
+  db.prepare('UPDATE cards SET remark = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(trimmed || null, req.params.id);
+  saveDatabase();
+
+  res.json({ code: 0, message: '备注已更新', timestamp: Date.now() });
+});
+
+// ── 设置使用到期时间 ─────────────────────────────────────────────────────────
+
+router.patch('/:id/usage-expiry', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  const { preset, usageExpiresAt } = req.body;
+
+  const card = db.prepare(
+    'SELECT id, status, usage_expires_at, auto_frozen_reason FROM cards WHERE id = ? AND user_id = ?'
+  ).get(req.params.id, req.user!.userId) as any;
+
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  if (card.status === 4) {
+    return res.json({ code: 400, message: '已注销卡不允许操作', timestamp: Date.now() });
+  }
+
+  let newDate: Date;
+  const now = new Date();
+
+  if (usageExpiresAt) {
+    newDate = new Date(usageExpiresAt);
+    if (isNaN(newDate.getTime())) {
+      return res.json({ code: 400, message: '时间格式无效', timestamp: Date.now() });
+    }
+    if (newDate <= now) {
+      return res.json({ code: 400, message: '到期时间不能早于当前时间', timestamp: Date.now() });
+    }
+  } else if (preset) {
+    const base = card.usage_expires_at
+      ? new Date(card.usage_expires_at.replace(' ', 'T'))
+      : now;
+    if (isNaN(base.getTime())) {
+      // 如果存储的时间无效，回退到当前时间
+      base.setTime(now.getTime());
+    }
+    // 如果 base 已过期，从当前时间开始计算
+    const effectiveBase = base > now ? base : now;
+
+    switch (preset) {
+      case '1m': newDate = new Date(effectiveBase.getTime() + 30 * 24 * 60 * 60 * 1000); break;
+      case '3m': newDate = new Date(effectiveBase.getTime() + 90 * 24 * 60 * 60 * 1000); break;
+      case '6m': newDate = new Date(effectiveBase.getTime() + 180 * 24 * 60 * 60 * 1000); break;
+      case '1y': newDate = new Date(effectiveBase.getTime() + 365 * 24 * 60 * 60 * 1000); break;
+      default:
+        return res.json({ code: 400, message: '预设值无效，支持: 1m/3m/6m/1y', timestamp: Date.now() });
+    }
+  } else {
+    return res.json({ code: 400, message: '请提供 preset 或 usageExpiresAt', timestamp: Date.now() });
+  }
+
+  const newUsageExpiresAt = newDate.toISOString().replace('T', ' ').slice(0, 19);
+
+  // 自动解冻：仅限因使用到期自动冻结的卡
+  if (card.status === 2 && card.auto_frozen_reason === 'USAGE_EXPIRED') {
+    db.prepare(`
+      UPDATE cards SET status = 1,
+        auto_frozen_at = NULL,
+        auto_frozen_reason = NULL,
+        usage_expires_at = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).run(newUsageExpiresAt, req.params.id, req.user!.userId);
+  } else {
+    db.prepare('UPDATE cards SET usage_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(newUsageExpiresAt, req.params.id);
+  }
+  saveDatabase();
+
+  res.json({
+    code: 0,
+    message: '使用到期时间已更新',
+    data: {
+      usageExpiresAt: newUsageExpiresAt,
+      status: (card.status === 2 && card.auto_frozen_reason === 'USAGE_EXPIRED') ? 1 : card.status,
+    },
+    timestamp: Date.now(),
+  });
 });
 
 export default router;

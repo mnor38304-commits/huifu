@@ -408,7 +408,6 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                       {displayCvv}
                     </span>
                   </Descriptions.Item>
-                  <Descriptions.Item label="申请时间">{detail.createdAt}</Descriptions.Item>
                   <Descriptions.Item label="发卡地">{detail.issueCountry}</Descriptions.Item>
                   <Descriptions.Item label="账单地址" span={3}>{detail.billingAddress || '—'}</Descriptions.Item>
                 </Descriptions>

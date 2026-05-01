@@ -1,8 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip } from 'antd'
-import { PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, WalletOutlined, TransactionOutlined } from '@ant-design/icons'
+import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip, Radio } from 'antd'
+import {
+  PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined,
+  DeleteOutlined, WalletOutlined, TransactionOutlined, EditOutlined, ClockCircleOutlined
+} from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard, cancelCard, topupCard } from '../services/api'
+import {
+  getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard,
+  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry
+} from '../services/api'
 import CardDetailModal from '../components/CardDetailModal'
 
 const { Option } = Select
@@ -142,6 +148,75 @@ const Cards: React.FC = () => {
   const closeCardDetail = () => {
     setDetailModalVisible(false)
     setDetailModalCardId(null)
+    loadCards()
+  }
+
+  // ── 备注编辑弹窗 ──
+  const [remarkModalVisible, setRemarkModalVisible] = useState(false)
+  const [remarkCardId, setRemarkCardId] = useState<number | null>(null)
+  const [remarkCardName, setRemarkCardName] = useState('')
+  const [remarkValue, setRemarkValue] = useState('')
+  const [remarkSubmitting, setRemarkSubmitting] = useState(false)
+
+  const openRemarkModal = (record: any) => {
+    setRemarkCardId(record.id)
+    setRemarkCardName(record.card_name || record.card_no_masked)
+    setRemarkValue(record.remark || '')
+    setRemarkModalVisible(true)
+  }
+
+  const handleRemarkSubmit = async () => {
+    if (!remarkCardId) return
+    setRemarkSubmitting(true)
+    try {
+      const res = await updateCardRemark(remarkCardId, remarkValue)
+      if (res.code === 0) {
+        message.success('备注已更新')
+        setRemarkModalVisible(false)
+        loadCards()
+      } else {
+        message.error(res.message)
+      }
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || '更新备注失败')
+    } finally {
+      setRemarkSubmitting(false)
+    }
+  }
+
+  // ── 使用到期时间弹窗 ──
+  const [expiryModalVisible, setExpiryModalVisible] = useState(false)
+  const [expiryCardId, setExpiryCardId] = useState<number | null>(null)
+  const [expiryCardName, setExpiryCardName] = useState('')
+  const [expiryPreset, setExpiryPreset] = useState('1m')
+  const [isUsageExpiredFrozen, setIsUsageExpiredFrozen] = useState(false)
+  const [expirySubmitting, setExpirySubmitting] = useState(false)
+
+  const openExpiryModal = (record: any) => {
+    setExpiryCardId(record.id)
+    setExpiryCardName(record.card_name || record.card_no_masked)
+    setExpiryPreset('1m')
+    setIsUsageExpiredFrozen(record.status === 2 && record.auto_frozen_reason === 'USAGE_EXPIRED')
+    setExpiryModalVisible(true)
+  }
+
+  const handleExpirySubmit = async () => {
+    if (!expiryCardId) return
+    setExpirySubmitting(true)
+    try {
+      const res = await setCardUsageExpiry(expiryCardId, expiryPreset)
+      if (res.code === 0) {
+        message.success('使用到期时间已更新')
+        setExpiryModalVisible(false)
+        loadCards()
+      } else {
+        message.error(res.message)
+      }
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || '设置失败')
+    } finally {
+      setExpirySubmitting(false)
+    }
   }
 
   const handleTopup = async () => {
@@ -185,6 +260,24 @@ const Cards: React.FC = () => {
     4: { text: '已注销', color: 'default' },
   }
 
+  const getStatusTag = (status: number, record: any) => {
+    if (status === 2 && record.auto_frozen_reason === 'USAGE_EXPIRED') {
+      return <Tag color="orange">已到期冻结</Tag>
+    }
+    const s = statusMap[status]
+    return <Tag color={s?.color}>{s?.text}</Tag>
+  }
+
+  const getUsageExpiryText = (record: any) => {
+    if (!record.usage_expires_at) return <span style={{ color: '#999' }}>未设置</span>
+    const now = new Date()
+    const expires = new Date(record.usage_expires_at.replace(' ', 'T'))
+    if (expires <= now) return <Tag color="red">已到期</Tag>
+    const diffDays = Math.ceil((expires.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    if (diffDays <= 7) return <Tag color="orange">即将到期</Tag>
+    return <span>{record.usage_expires_at}</span>
+  }
+
   const cardTypeMap: Record<string, string> = {
     AD: '广告卡',
     PROC: '采购卡',
@@ -208,10 +301,17 @@ const Cards: React.FC = () => {
       key: 'card_name',
     },
     {
-      title: '类型',
-      dataIndex: 'card_type',
-      key: 'card_type',
-      render: (type: string) => cardTypeMap[type] || type,
+      title: '备注',
+      dataIndex: 'remark',
+      key: 'remark',
+      render: (text: string, record: any) => (
+        <Space>
+          <span style={{ maxWidth: 120, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {text || '-'}
+          </span>
+          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openRemarkModal(record)} />
+        </Space>
+      ),
     },
     {
       title: '余额',
@@ -220,21 +320,27 @@ const Cards: React.FC = () => {
       render: (val: number) => `$${val?.toFixed(2) || '0.00'}`,
     },
     {
-      title: '额度',
-      dataIndex: 'credit_limit',
-      key: 'credit_limit',
-      render: (val: number) => `$${val?.toFixed(2) || '0.00'}`,
-    },
-    {
-      title: '有效期',
+      title: '卡面有效期',
       dataIndex: 'expire_date',
       key: 'expire_date',
+    },
+    {
+      title: '使用到期时间',
+      dataIndex: 'usage_expires_at',
+      key: 'usage_expires_at',
+      render: (_: any, record: any) => getUsageExpiryText(record),
+    },
+    {
+      title: '开卡时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (val: string) => val ? new Date(val).toLocaleString('zh-CN') : '-',
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: number) => <Tag color={statusMap[status]?.color}>{statusMap[status]?.text}</Tag>,
+      render: (status: number, record: any) => getStatusTag(status, record),
     },
     {
       title: '操作',
@@ -284,6 +390,17 @@ const Cards: React.FC = () => {
                 <DeleteOutlined /> 销卡
               </Button>
             </Popconfirm>
+          )}
+          {record.status !== 4 && (
+            <Button
+              type="link"
+              size="small"
+              icon={<ClockCircleOutlined />}
+              style={{ color: '#8c8c8c' }}
+              onClick={() => openExpiryModal(record)}
+            >
+              {record.status === 2 && record.auto_frozen_reason === 'USAGE_EXPIRED' ? '延长使用时间' : '设置到期时间'}
+            </Button>
           )}
         </Space>
       ),
@@ -431,6 +548,61 @@ const Cards: React.FC = () => {
         visible={detailModalVisible}
         onClose={closeCardDetail}
       />
+
+      {/* ── 编辑备注弹窗 ── */}
+      <Modal
+        title="编辑卡片备注"
+        open={remarkModalVisible}
+        onCancel={() => setRemarkModalVisible(false)}
+        onOk={handleRemarkSubmit}
+        confirmLoading={remarkSubmitting}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+          卡片: <strong>{remarkCardName}</strong>
+        </div>
+        <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
+          可备注使用者姓名、用途、平台名称等
+        </div>
+        <Input
+          placeholder="输入卡片备注"
+          value={remarkValue}
+          onChange={e => setRemarkValue(e.target.value)}
+          maxLength={100}
+          showCount
+        />
+      </Modal>
+
+      {/* ── 使用到期时间设置弹窗 ── */}
+      <Modal
+        title={isUsageExpiredFrozen ? '延长使用时间' : '设置使用到期时间'}
+        open={expiryModalVisible}
+        onCancel={() => setExpiryModalVisible(false)}
+        onOk={handleExpirySubmit}
+        confirmLoading={expirySubmitting}
+        okText="确认"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+          卡片: <strong>{expiryCardName}</strong>
+        </div>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="设置使用到期时间后，卡片到期会自动冻结。延长使用时间后，因到期被冻结的卡片会自动恢复正常。"
+        />
+        <div style={{ marginBottom: 8, fontWeight: 500 }}>选择使用期限</div>
+        <Radio.Group value={expiryPreset} onChange={e => setExpiryPreset(e.target.value)}>
+          <Radio.Button value="1m">1个月</Radio.Button>
+          <Radio.Button value="3m">3个月</Radio.Button>
+          <Radio.Button value="6m">6个月</Radio.Button>
+          <Radio.Button value="1y">1年</Radio.Button>
+        </Radio.Group>
+      </Modal>
     </div>
   )
 }

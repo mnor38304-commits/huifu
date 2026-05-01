@@ -72,6 +72,12 @@ export const freezeCard = (id: number) => api.post(`/cards/${id}/freeze`)
 export const unfreezeCard = (id: number) => api.post(`/cards/${id}/unfreeze`)
 export const cancelCard = (id: number) => api.post(`/cards/${id}/cancel`)
 
+// ── 卡片备注 ─────────────────────────────────────────────────────────────────
+export const updateCardRemark = (id: number, remark: string) => api.patch(`/cards/${id}/remark`, { remark })
+
+// ── 使用到期时间 ─────────────────────────────────────────────────────────────
+export const setCardUsageExpiry = (id: number, preset: string) => api.patch(`/cards/${id}/usage-expiry`, { preset })
+
 // ── 卡片详情弹窗 ─────────────────────────────────────────────────────────────
 export const getCardEnhancedDetail = (id: number) => api.get(`/cards/${id}/detail`)
 export const getCardTransactions = (id: number, params: any) => api.get(`/cards/${id}/transactions`, { params })
