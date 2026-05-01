@@ -19,7 +19,7 @@ import { Router, Response } from 'express';
 import db from '../db';
 import { adminAuth, AdminRequest, requireAdminRole, writeAdminLog } from './admin-auth';
 import { getCardholderAdapter, listChannelCodes } from '../services/cardholder-adapters';
-import { dogpayMaskUtils } from '../services/cardholder-adapters/dogpay-cardholder-adapter';
+import { dogpayMaskUtils, checkDogPayCreateCardholderConfig } from '../services/cardholder-adapters/dogpay-cardholder-adapter';
 
 const router = Router();
 
@@ -275,10 +275,13 @@ router.post('/batch/create', requireAdminRole('admin', 'super'), async (req: Adm
   }
 
   // 渠道可用性检查（提前抛出配置错误，不等逐条执行）
-  try {
-    // 只做适配器的配置检查，不实际创建持卡人
-    // （DogPay adapter 的 createCardholder 内部会做配置校验）
-  } catch (_) {}
+  if (cc === 'DOGPAY') {
+    try {
+      checkDogPayCreateCardholderConfig();
+    } catch (e: any) {
+      return res.json({ code: 503, message: e.message || 'DogPay 渠道配置不完整', timestamp: Date.now() });
+    }
+  }
 
   const results: any[] = [];
   let success = 0;

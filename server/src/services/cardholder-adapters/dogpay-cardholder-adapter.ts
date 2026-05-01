@@ -112,6 +112,29 @@ function validateIdNumber(id?: string): string[] {
   return errs;
 }
 
+// ── 配置校验（导出发路由层复用） ─────────────────────────────────────────────
+
+/**
+ * 检查 DogPay 渠道配置是否完整。
+ * 只从 config_json 读取 appId/appSecret，不允许 fallback 到 api_key/api_secret 列。
+ * 配置不完整时抛出 Error。
+ */
+export function checkDogPayCreateCardholderConfig(): { channel: any; appId: string; appSecret: string } {
+  const channel = db.prepare(
+    "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay' AND status = 1"
+  ).get() as any;
+  if (!channel) throw new Error('DogPay 渠道未启用（status≠1），请先在「渠道对接」页面启用');
+  if (!channel.api_base_url) throw new Error('DogPay 渠道 api_base_url 未配置');
+
+  let config: Record<string, string> = {};
+  try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
+
+  if (!config.appId) throw new Error('DogPay 渠道 appId 未配置，请在 config_json 中设置');
+  if (!config.appSecret) throw new Error('DogPay 渠道 appSecret 未配置，请在 config_json 中设置');
+
+  return { channel, appId: config.appId, appSecret: config.appSecret };
+}
+
 // ── Adapter 实现 ──────────────────────────────────────────────────────────────
 
 export const dogpayCardholderAdapter: CardholderAdapter = {
@@ -165,18 +188,8 @@ export const dogpayCardholderAdapter: CardholderAdapter = {
   },
 
   async createCardholder(input: NormalizedCardholderInput): Promise<CardholderCreateResult> {
-    const channel = db.prepare(
-      "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay' AND status = 1"
-    ).get() as any;
-    if (!channel) throw new Error('DogPay 渠道未启用（status≠1），请先在「渠道对接」页面启用');
-    if (!channel.api_base_url) throw new Error('DogPay 渠道 api_base_url 未配置');
-
-    let config: Record<string, string> = {};
-    try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
-    const appId = config.appId || channel.api_key || '';
-    const appSecret = config.appSecret || channel.api_secret || '';
-    if (!appId) throw new Error('DogPay 渠道 appId 未配置，请在 config_json 中设置');
-    if (!appSecret) throw new Error('DogPay 渠道 appSecret 未配置，请在 config_json 中设置');
+    // 使用统一配置校验（只从 config_json 读取，不允许 fallback）
+    const { channel, appId, appSecret } = checkDogPayCreateCardholderConfig();
 
     const { DogPaySDK } = await import('../../channels/dogpay');
     const sdk = new DogPaySDK({ appId, appSecret, apiBaseUrl: channel.api_base_url });
