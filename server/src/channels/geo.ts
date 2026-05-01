@@ -29,12 +29,6 @@ export interface GeoConfig {
   authMode?: 'RSA_4_PARAMS' | 'BASIC_AUTH';
 }
 
-export interface GeoAccountBalance {
-  availableBalance: number;
-  pendingBalance: number;
-  rawJson: any;
-}
-
 export interface GeoBin {
   id: string;
   bin: string;
@@ -244,17 +238,6 @@ export class GeoSdk {
 
     // 如果没有 result 字段但 success=true，返回整个 data
     return rawData.data !== undefined ? rawData.data : rawData as T;
-  }
-
-  // ── 账户余额 ──────────────────────────────────────────────────────────
-
-  async getAccountBalance(): Promise<GeoAccountBalance> {
-    const data = await this.request<any>('POST', '/account/balance');
-    return {
-      availableBalance: data.availableBalance ?? data.available_balance ?? data.available ?? 0,
-      pendingBalance: data.pendingBalance ?? data.pending_balance ?? data.pending ?? 0,
-      rawJson: data,
-    };
   }
 
   // ── 可用 BIN ─────────────────────────────────────────────────────────
