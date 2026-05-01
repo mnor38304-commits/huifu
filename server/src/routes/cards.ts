@@ -67,16 +67,17 @@ async function getChannelSDK(): Promise<ChannelSDK> {
     let geoConfig: Record<string, any> = {};
     try { geoConfig = JSON.parse(geoChannel.config_json || '{}'); } catch (_) {}
 
-    if (geoConfig.authMode === 'RSA_4_PARAMS') {
-      if (!geoConfig.userNo) {
-        throw new Error('GEO RSA 配置不完整：缺少 userNo');
-      }
-      if (!geoConfig.appPublicKey) {
-        throw new Error('GEO RSA 配置不完整：缺少 appPublicKey (GEO 平台公钥)');
-      }
+    if (!geoConfig.userNo) {
+      throw new Error('GEO RSA 配置不完整：缺少 userNo');
+    }
+    if (!geoConfig.privateKey) {
+      throw new Error('GEO RSA 配置不完整：缺少 privateKey');
+    }
+    if (!geoConfig.publicKey) {
+      throw new Error('GEO RSA 配置不完整：缺少 publicKey');
     }
 
-    const baseUrl = geoChannel.api_base_url || geoConfig.apiBaseUrl || geoConfig.baseUrl;
+    const baseUrl = geoChannel.api_base_url || geoConfig.apiBaseUrl;
     if (!baseUrl) {
       throw new Error('GEO 渠道 api_base_url 未配置');
     }
@@ -85,9 +86,9 @@ async function getChannelSDK(): Promise<ChannelSDK> {
       const { GeoSdk } = await import('../channels/geo');
       const sdk = new GeoSdk({
         baseUrl: baseUrl,
-        userNo: geoConfig.userNo || '',
-        appPublicKey: geoConfig.appPublicKey || '',
-        authMode: geoConfig.authMode || 'RSA_4_PARAMS',
+        userNo: geoConfig.userNo,
+        privateKey: geoConfig.privateKey,
+        publicKey: geoConfig.publicKey,
       });
       console.log('[Channel] 使用 GEO 渠道 (RSA 4 参数模式)');
       return { type: 'geo', sdk, channel: geoChannel };
@@ -414,7 +415,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         cardLimit: Number(creditLimit),
         currency: geoConfig.defaultCurrency || 'USD',
         binRangeId: selectedBin.external_bin_id,
-        validityMonths: geoConfig.defaultCardValidityMonths || 12,
+        validityYears: geoConfig.defaultCardValidityYears || 2,
       });
 
       externalId = geoCard.cardId || '';

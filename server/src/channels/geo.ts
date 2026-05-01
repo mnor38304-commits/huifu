@@ -3,19 +3,12 @@
  *
  * API 网关: https://uat-openapi.geo.sh.cn/ (沙盒) / https://openapi.geo.sh.cn/ (生产)
  * 认证: RSA 1024 + Base64 + Hex 4 参数请求模式
+ *   请求 dataContent = privateEncrypt(JSON -> Base64)
+ *   响应 result = publicDecrypt(Hex -> Base64 -> JSON)
  *
- * 请求参数:
- *   version: "1.0.0"
- *   userNo: 商户号 (字符串, 最长 19 位)
- *   dataType: "JSON" (固定)
- *   dataContent: 业务参数 JSON → Base64 → RSA 1024 加密 → Hex
- *
- * 响应解密:
- *   result 字段 (Hex) → RSA 1024 解密 → Base64 解码 → JSON
- *
- * 密钥说明:
- *   - appPublicKey = GEO 平台公钥 = 客户公钥 (App 公钥与客户公钥为同一把 RSA 1024 公钥)
- *   - 由 GEO 签发,用于: 1) 请求 dataContent 加密 (publicEncrypt) 2) 响应 result 解密 (publicDecrypt)
+ * 参考: geo.zip Java 示例 (GeoReq.java, GeoPayCardApplyService.java)
+ *   GeoReq.buildParam: privateEncrypt(body, priKey)
+ *   GeoPayQryCardService: publicDecrypt(result, pubKey)
  */
 
 import crypto from 'crypto';
@@ -25,33 +18,14 @@ import crypto from 'crypto';
 export interface GeoConfig {
   baseUrl: string;
   userNo: string;
-  appPublicKey: string;  // GEO 平台 RSA 公钥 (PKCS#1 PEM)
-  authMode?: 'RSA_4_PARAMS' | 'BASIC_AUTH';
+  privateKey: string;   // RSA 1024 私钥 (PKCS#1 PEM), 用于请求加密
+  publicKey: string;    // RSA 1024 公钥 (PKCS#1 PEM), 用于响应解密
 }
 
 export interface GeoBin {
-  id: string;
-  bin: string;
-  organization: string;
-  issuerCountry?: string | null;
-  type: string;
-  limit: number;
+  cardBin: string;
+  cardBrand: string;
   currency: string;
-  supportAvs?: boolean;
-  support3ds?: boolean;
-  channelName?: string;
-  status: string;
-  createdAt?: string;
-  order?: string;
-  supportAirlines?: boolean | null;
-  modeType?: 'SINGLE' | 'SHARE' | string;
-  isSingle: boolean;
-}
-
-export interface GeoSpendingLimit {
-  limit: number;
-  netConsumption: number;
-  surplusLimit: number;
 }
 
 export interface GeoCardCreateParams {
@@ -60,100 +34,88 @@ export interface GeoCardCreateParams {
   cardLimit: number;
   currency?: string;
   binRangeId: string;
-  validityMonths?: number;
+  validityYears?: number;
+  cardUserId?: string;
 }
 
 export interface GeoCard {
   cardId: string;
-  status: string;
-  cardNoMasked: string;
-  last4?: string;
-  expireDate?: string;
-  balance?: number;
+  cardNo: string;         // 完整卡号（仅用于前端临时展示，不落库）
+  cardVerifyNo: string;   // CVV（仅用于前端临时展示，不落库）
+  cardExpiryDate: string; // yyyy-MM (如 2028-12)
+  status: string;         // GEO cardStatus
   rawJson: any;
 }
 
 // ─── SDK ──────────────────────────────────────────────────────────────────────
 
+const CHUNK_SIZE = 117;   // RSA 1024 PKCS#1 单块最大明文
+const HEX_CHUNK = 256;    // RSA 1024 单块加密后 hex 长度
+
 export class GeoSdk {
   private baseUrl: string;
   private userNo: string;
-  private appPublicKey: string;
-  private authMode: 'RSA_4_PARAMS' | 'BASIC_AUTH';
+  private privateKey: string;
+  private publicKey: string;
 
   constructor(config: GeoConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.userNo = config.userNo;
-    this.appPublicKey = config.appPublicKey;
-    this.authMode = config.authMode || 'RSA_4_PARAMS';
+    this.privateKey = config.privateKey;
+    this.publicKey = config.publicKey;
   }
 
-  /**
-   * 确认 RSA 配置是否完整
-   */
-  isRsaConfigured(): boolean {
-    return !!(this.userNo && this.appPublicKey);
+  // ── 密钥格式化 ──────────────────────────────────────────────────────────
+
+  private fmtPrivateKey(raw: string): string {
+    let k = raw.replace(/-----BEGIN .*? KEY-----/g, '').replace(/-----END .*? KEY-----/g, '').replace(/\s+/g, '');
+    return '-----BEGIN RSA PRIVATE KEY-----\n' + (k.match(/.{1,64}/g)?.join('\n') || k) + '\n-----END RSA PRIVATE KEY-----';
   }
 
-  /**
-   * 格式化 PEM 公钥 — 确保 RSA 1024 公钥有正确 PEM 头尾
-   */
-  private formatRsaPublicKey(rawKey: string): string {
-    let cleaned = rawKey.replace(/-----BEGIN RSA PUBLIC KEY-----/g, '')
-                       .replace(/-----END RSA PUBLIC KEY-----/g, '')
-                       .replace(/-----BEGIN PUBLIC KEY-----/g, '')
-                       .replace(/-----END PUBLIC KEY-----/g, '')
-                       .replace(/\s+/g, '')
-                       .replace(/\n/g, '');
-
-    // PKCS#1 (RSA PUBLIC KEY)
-    if (cleaned.length > 100 && !cleaned.startsWith('MIGf') && !cleaned.startsWith('MF')) {
-      // Likely already clean
-    }
-
-    return [
-      '-----BEGIN PUBLIC KEY-----',
-      cleaned.match(/.{1,64}/g)?.join('\n') || cleaned,
-      '-----END PUBLIC KEY-----',
-    ].join('\n');
+  private fmtPublicKey(raw: string): string {
+    let k = raw.replace(/-----BEGIN .*? KEY-----/g, '').replace(/-----END .*? KEY-----/g, '').replace(/\s+/g, '');
+    return '-----BEGIN RSA PUBLIC KEY-----\n' + (k.match(/.{1,64}/g)?.join('\n') || k) + '\n-----END RSA PUBLIC KEY-----';
   }
 
-  // ── 加密: JSON → Base64 → RSA 加密 → Hex ──────────────────────────────
+  // ── RSA 分块加密 ─────────────────────────────────────────────────────────
 
   /**
-   * 加密业务参数为 dataContent（RSA 1024）
-   * 步骤: JSON.stringify → Base64 → RSA 1024 公钥加密 → Hex
+   * 加密业务参数为 dataContent
+   * 步骤: JSON.stringify -> Base64 -> 分块 privateEncrypt -> hex 拼接
    */
   encryptPayload(payload: Record<string, unknown>): string {
     const jsonStr = JSON.stringify(payload);
     const base64Str = Buffer.from(jsonStr, 'utf-8').toString('base64');
-    const pemKey = this.formatRsaPublicKey(this.appPublicKey);
-    const encrypted = crypto.publicEncrypt(
-      {
-        key: pemKey,
-        padding: crypto.constants.RSA_PKCS1_PADDING,
-      },
-      Buffer.from(base64Str, 'utf-8')
-    );
-    return encrypted.toString('hex');
+    const buf = Buffer.from(base64Str, 'utf-8');
+    const pemKey = this.fmtPrivateKey(this.privateKey);
+    const chunks: string[] = [];
+    for (let i = 0; i < buf.length; i += CHUNK_SIZE) {
+      const chunk = buf.slice(i, i + CHUNK_SIZE);
+      const encrypted = crypto.privateEncrypt(
+        { key: pemKey, padding: crypto.constants.RSA_PKCS1_PADDING },
+        chunk
+      );
+      chunks.push(encrypted.toString('hex'));
+    }
+    return chunks.join('');
   }
-
-  // ── 解密: Hex → RSA 解密 → Base64 解码 → JSON ────────────────────────
 
   /**
    * 解密 GEO 返回的 result 字段
-   * 步骤: Hex → RSA 公钥解密 → Base64 解码 → JSON
+   * 步骤: 按 256 hex 字符分块 -> publicDecrypt -> 拼接 -> Base64 解码 -> JSON
    */
   decryptResponse(hexData: string): any {
-    const pemKey = this.formatRsaPublicKey(this.appPublicKey);
-    const decrypted = crypto.publicDecrypt(
-      {
-        key: pemKey,
-        padding: crypto.constants.RSA_PKCS1_PADDING,
-      },
-      Buffer.from(hexData, 'hex')
-    );
-    const base64Str = decrypted.toString('utf-8');
+    const pemKey = this.fmtPublicKey(this.publicKey);
+    const bufs: Buffer[] = [];
+    for (let i = 0; i < hexData.length; i += HEX_CHUNK) {
+      const hexChunk = hexData.slice(i, i + HEX_CHUNK);
+      const decrypted = crypto.publicDecrypt(
+        { key: pemKey, padding: crypto.constants.RSA_PKCS1_PADDING },
+        Buffer.from(hexChunk, 'hex')
+      );
+      bufs.push(decrypted);
+    }
+    const base64Str = Buffer.concat(bufs).toString('utf-8');
     const jsonStr = Buffer.from(base64Str, 'base64').toString('utf-8');
     return JSON.parse(jsonStr);
   }
@@ -163,14 +125,14 @@ export class GeoSdk {
   sanitizeLog(data: any): any {
     if (!data) return data;
     const s = JSON.parse(JSON.stringify(data));
-    const sensitiveKeys = ['apiKey', 'apiSecret', 'Authorization', 'authorization',
+    const keys = ['privateKey', 'publicKey', 'priKey', 'pubKey', 'Authorization',
       'pan', 'PAN', 'cvv', 'CVV', 'cardNo', 'cardNumber', 'card_no',
-      'appPublicKey', 'appPrivateKey', 'geoPublicKey', 'userNo'];
+      'cardVerifyNo', 'userNo', 'dataContent', 'result'];
     const recurse = (obj: any) => {
       if (!obj || typeof obj !== 'object') return;
       for (const key of Object.keys(obj)) {
-        if (sensitiveKeys.some(k => key.toLowerCase().includes(k.toLowerCase()))) {
-          obj[key] = '***REDACTED***';
+        if (keys.some(k => key.toLowerCase().includes(k.toLowerCase())) && typeof obj[key] === 'string' && obj[key].length > 4) {
+          obj[key] = obj[key].slice(0, 4) + '***REDACTED***';
         } else if (typeof obj[key] === 'object') {
           recurse(obj[key]);
         }
@@ -182,19 +144,9 @@ export class GeoSdk {
 
   // ── 通用 RSA 请求 ──────────────────────────────────────────────────────
 
-  async request<T>(method: string, path: string, body?: Record<string, unknown>, _query?: Record<string, string>): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
-
-    // 构建 RSA 4 参数请求体
-    const payload: Record<string, unknown> = {
-      ...(body || {}),
-    };
-    if (method !== 'GET') {
-      payload._method = method;
-    }
-
-    const dataContent = this.encryptPayload(payload);
-
+  async request<T>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {
+    const url = this.baseUrl + path;
+    const dataContent = this.encryptPayload(body || {});
     const requestBody = {
       version: '1.0.0',
       userNo: this.userNo,
@@ -202,7 +154,8 @@ export class GeoSdk {
       dataContent,
     };
 
-    console.log('[GEO]', path, 'req:', JSON.stringify(this.sanitizeLog(requestBody)).slice(0, 300));
+    console.log('[GEO]', method, path, 'req(脱敏):', JSON.stringify(this.sanitizeLog(requestBody)).slice(0, 300));
+
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -211,142 +164,116 @@ export class GeoSdk {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`GEO API ${path} failed: ${response.status} - ${text.slice(0, 200)}`);
+      throw new Error('GEO API ' + path + ' failed: ' + response.status + ' - ' + text.slice(0, 200));
     }
 
     const rawData: any = await response.json();
+    console.log('[GEO]', path, 'resp(脱敏):', JSON.stringify(this.sanitizeLog(rawData)).slice(0, 300));
 
-    if (rawData.success === false || rawData.success === 'false') {
-      throw new Error(`GEO API error: [${rawData.errorCode}] ${rawData.errorMsg || 'unknown error'}`);
-    }
-
-    if (rawData.async === true) {
-      console.warn(`[GEO] ${path} 返回 async=true，结果将通过回调通知`);
-      return rawData.result as T;
-    }
-
-    // result 字段是 Hex → 需要 RSA 解密 → Base64 解码 → JSON
-    if (rawData.result) {
-      try {
-        const decrypted = this.decryptResponse(rawData.result);
-        return decrypted as T;
-      } catch (decErr: any) {
-        console.error(`[GEO] result 解密失败:`, decErr.message);
-        throw new Error(`GEO 响应解密失败: ${decErr.message}`);
+    if (rawData.success === true) {
+      if (rawData.async === true) {
+        console.warn('[GEO]', path, 'async=true, result will be notified via callback');
+        return rawData.result as T;
+      }
+      if (rawData.result) {
+        try {
+          return this.decryptResponse(rawData.result) as T;
+        } catch (decErr: any) {
+          console.error('[GEO] response decrypt failed:', decErr.message);
+          throw new Error('GEO response decrypt failed: ' + decErr.message);
+        }
       }
     }
 
-    // 如果没有 result 字段但 success=true，返回整个 data
-    return rawData.data !== undefined ? rawData.data : rawData as T;
+    throw new Error('GEO API error: success=' + rawData.success + ', async=' + rawData.async + ', statusCode=' + rawData.statusCode + ', msg=' + (rawData.message || ''));
   }
 
-  // ── 可用 BIN ─────────────────────────────────────────────────────────
+  // ── BIN 查询 ──────────────────────────────────────────────────────────
 
   async listBins(): Promise<GeoBin[]> {
-    const data = await this.request<any>('POST', '/openapi/vcc/cardBin');
-    const list = Array.isArray(data) ? data : (data.list || data.data || []);
-    return list.map((item: any) => this.normalizeBin(item));
-  }
-
-  getSingleBins(bins: GeoBin[]): GeoBin[] {
-    return bins.filter(b => b.isSingle === true);
-  }
-
-  private normalizeBin(raw: any): GeoBin {
-    // GEO real field: cardType (1=常规卡/SINGLE), also check common names
-    let modeValue = '';
-    if (raw.cardType === 1 || raw.cardType === '1') { modeValue = 'SINGLE'; }
-    else if (raw.cardType === 2 || raw.cardType === '2') { modeValue = 'SHARE'; }
-    else { modeValue = raw.mode || raw.modeType || raw.cardMode || raw.accountType || raw.settlementType || raw.shareType || ''; }
-    const modeUpper = (modeValue || '').toString().toUpperCase();
-    const isSingle = modeUpper === 'SINGLE' || modeUpper === 'INDIVIDUAL' || modeUpper === 'SINGLE_ACCOUNT';
-    const modeType = isSingle ? 'SINGLE' as const : (['SHARE', 'GROUP', 'POOL'].includes(modeUpper) ? 'SHARE' as const : undefined);
-
-    return {
-      id: raw.id || raw.binId || raw.bin_id || '',
-      bin: raw.bin || raw.binCode || raw.bin_code || '',
-      organization: raw.organization || raw.cardBrand || raw.card_brand || raw.issuer || '',
-      issuerCountry: raw.issuerCountry || raw.issuer_country || raw.country || null,
-      type: String(raw.type || raw.cardType || raw.card_type || ''),
-      limit: raw.limit ?? raw.cardLimit ?? raw.card_limit ?? raw.spendingLimit ?? 0,
-      currency: raw.currency || 'USD',
-      supportAvs: raw.supportAvs ?? raw.support_avs ?? false,
-      support3ds: raw.support3ds ?? raw.support_3ds ?? false,
-      channelName: raw.channelName || raw.channel_name || '',
-      status: raw.status || 'active',
-      createdAt: raw.createdAt || raw.created_at || '',
-      order: raw.order || '',
-      supportAirlines: raw.supportAirlines ?? raw.support_airlines ?? null,
-      modeType,
-      isSingle,
-    };
-  }
-
-  // ── 额度信息 ──────────────────────────────────────────────────────────
-
-  async getSpendingLimit(): Promise<GeoSpendingLimit> {
-    const data = await this.request<any>('POST', '/cards/spending/limit');
-    return {
-      limit: data.limit ?? data.spendingLimit ?? 0,
-      netConsumption: data.netConsumption ?? data.net_consumption ?? 0,
-      surplusLimit: data.surplusLimit ?? data.surplus_limit ?? 0,
-    };
+    const data: any = await this.request('POST', '/openapi/vcc/cardBin', { userReqNo: crypto.randomUUID() });
+    const list: any[] = data.data || data.list || [];
+    return list.map((item: any) => ({
+      cardBin: item.cardBin || item.binRangeId || item.cardBinId || item.id || '',
+      cardBrand: item.cardBrand || item.brand || '',
+      currency: item.currency || 'USD',
+    }));
   }
 
   // ── 开卡 ──────────────────────────────────────────────────────────────
 
   async createCard(params: GeoCardCreateParams): Promise<GeoCard> {
     const now = new Date();
-    const random = Math.random().toString(36).slice(2, 8);
-    const userReqNo = 'geo_' + params.userId + '_' + Date.now() + '_' + random;
     const y = now.getFullYear();
     const M = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
     const startDate = y + '-' + M + '-' + d;
-    const validityMs = (params.validityMonths || 12) * 30 * 24 * 60 * 60 * 1000;
-    const endDt = new Date(now.getTime() + validityMs);
+    const validityYears = params.validityYears || 2;
+    const endDt = new Date(now.getFullYear() + validityYears, now.getMonth(), now.getDate());
     const endDate = endDt.getFullYear() + '-' + String(endDt.getMonth() + 1).padStart(2, '0') + '-' + String(endDt.getDate()).padStart(2, '0');
 
     const body: Record<string, unknown> = {
-      userReqNo: userReqNo,
+      authLimitAmount: params.cardLimit,
       localCurrency: params.currency || 'USD',
+      userReqNo: crypto.randomUUID(),
       startDate: startDate,
       endDate: endDate,
       enableCurrencyCheck: 1,
-      authLimitAmount: params.cardLimit,
-      CardAlias: params.cardName || 'GEO Card',
       binRangeId: params.binRangeId,
+      enableMultiUse: 1,
       channelType: 1,
-      remarkOne: 'user_' + params.userId,
-      remarkTwo: 'sandbox',
+      CardAlias: params.cardName || 'GEO Card',
     };
 
-    const data = await this.request<any>('POST', '/openapi/vcc/card/apply', body);
-    return this.normalizeCard(data);
+    if (params.cardUserId) {
+      body.cardUserId = params.cardUserId;
+    }
+
+    const data: any = await this.request('POST', '/openapi/vcc/card/apply', body);
+
+    return {
+      cardId: data.cardId || '',
+      cardNo: data.cardNo || '',
+      cardVerifyNo: data.cardVerifyNo || '',
+      cardExpiryDate: data.cardExpiryDate || endDate.substring(0, 7),
+      status: '1',
+      rawJson: this.sanitizeLog(data),
+    };
   }
 
-  private normalizeCard(raw: any): GeoCard {
-    const cardData = raw.data || raw.card || raw;
+  // ── 卡信息查询 ──────────────────────────────────────────────────────────
+
+  async getCardInfo(cardId: string): Promise<GeoCard> {
+    const data: any = await this.request('POST', '/openapi/vcc/card/info', { cardId });
+
+    let status = '0';
+    if (data.cardStatus === '1') status = '1';
+    else if (data.cardStatus === '0') status = '4';
+    else if (data.cardStatus === '2') status = '2';
+
     return {
-      cardId: cardData.cardId || cardData.card_id || cardData.id || '',
-      status: cardData.status || cardData.cardStatus || cardData.card_status || 'PENDING',
-      cardNoMasked: cardData.cardNoMasked || cardData.card_no_masked || cardData.maskedPan || `****${(cardData.last4 || '').slice(-4)}` || '',
-      last4: cardData.last4 || (cardData.cardNoMasked || '').slice(-4) || undefined,
-      expireDate: cardData.expireDate || cardData.expire_date || cardData.expiry || undefined,
-      balance: cardData.balance ?? cardData.cardBalance ?? undefined,
-      rawJson: this.sanitizeLog(raw),
+      cardId: data.cardId || cardId,
+      cardNo: data.cardNo || '',
+      cardVerifyNo: data.cardVerifyNo || '',
+      cardExpiryDate: data.cardExpiryDate || '',
+      status: status,
+      rawJson: this.sanitizeLog(data),
     };
   }
 
   // ── 状态映射 ──────────────────────────────────────────────────────────
 
+  /**
+   * 将 GEO cardStatus 映射为本地 cards.status
+   * Java 参考: GeoPayQryCardService
+   *   cardStatus=1 -> status=1 (正常)
+   *   cardStatus=0 -> status=4 (已注销)
+   *   cardStatus=2 -> status=2 (冻结)
+   */
   static mapStatus(geoStatus: string): number {
-    const s = (geoStatus || '').toLowerCase();
-    if (['active', 'success', 'activated'].includes(s)) return 1;
-    if (['pending', 'processing', 'created'].includes(s)) return 0;
-    if (['frozen', 'suspended', 'disabled', 'paused'].includes(s)) return 2;
-    if (['expired', 'expiring'].includes(s)) return 3;
-    if (['canceled', 'cancelled', 'closed', 'deleted'].includes(s)) return 4;
+    if (geoStatus === '1') return 1;
+    if (geoStatus === '0') return 4;
+    if (geoStatus === '2') return 2;
     return 0;
   }
 }
