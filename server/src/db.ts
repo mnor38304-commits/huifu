@@ -360,6 +360,8 @@ export async function initDatabase(): Promise<Database> {
     try { db.run("ALTER TABLE cardholders ADD COLUMN provider_kyc_status TEXT"); } catch (_) {}
     try { db.run("ALTER TABLE cardholders ADD COLUMN provider_payload_json TEXT"); } catch (_) {}
     try { db.run("ALTER TABLE cardholders ADD COLUMN provider_response_json TEXT"); } catch (_) {}
+    // 卡片备注字段（幂等迁移）
+    try { db.run("ALTER TABLE cards ADD COLUMN remark TEXT"); } catch (_) {}
   } catch (e) {}
 
   saveDatabase();

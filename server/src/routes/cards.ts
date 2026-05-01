@@ -417,6 +417,200 @@ router.get('/:id', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>
   res.json({ code: 0, message: 'success', data: card, timestamp: Date.now() });
 });
 
+// ── 卡片详情（增强版，含累计消费/累计转入） ─────────────────────────────────
+
+router.get('/:id/detail', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  const card = db.prepare(`
+    SELECT c.*, b.country as bin_country
+    FROM cards c
+    LEFT JOIN card_bins b ON c.bin_id = b.id
+    WHERE c.id = ? AND c.user_id = ?
+  `).get(req.params.id, req.user!.userId) as any;
+
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  // 累计消费：成功消费/授权交易
+  const spendRow = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total
+    FROM transactions WHERE card_id = ? AND user_id = ? AND status = 1
+    AND txn_type IN ('CONSUME', 'AUTH', 'CAPTURE', 'PURCHASE', 'WITHDRAWAL')
+  `).get(req.params.id, req.user!.userId) as any;
+  const totalSpend = spendRow?.total || 0;
+
+  // 累计转入：成功充值/转入交易
+  const topupRow = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total
+    FROM transactions WHERE card_id = ? AND user_id = ? AND status = 1
+    AND txn_type IN ('TOPUP', 'TRANSFER_IN', 'REFUND')
+  `).get(req.params.id, req.user!.userId) as any;
+  const totalTopup = topupRow?.total || 0;
+
+  const statusMap: Record<number, string> = {
+    0: '待激活', 1: '可用', 2: '冻结', 3: '已过期', 4: '已注销',
+  };
+
+  const issuedAt = card.created_at
+    ? new Date(card.created_at).toISOString().replace('T', ' ').slice(0, 19)
+    : '';
+
+  res.json({
+    code: 0,
+    message: 'success',
+    data: {
+      id: card.id,
+      cardId: card.external_id || '',
+      remark: card.remark || card.card_name || 'VCC 卡片',
+      status: card.status,
+      statusText: statusMap[card.status] || '未知',
+      cardNumberMasked: card.card_no_masked,
+      expiryMasked: card.expire_date ? (card.expire_date.includes('/') ? card.expire_date : '**/**') : '**/**',
+      cvvMasked: '***',
+      balance: card.balance || 0,
+      totalSpendAmount: totalSpend,
+      totalTopupAmount: totalTopup,
+      currency: card.currency || 'USD',
+      createdAt: issuedAt,
+      issueCountry: card.bin_country || 'US',
+      billingAddress: card.purpose || '',
+    },
+    timestamp: Date.now(),
+  });
+});
+
+// ── 交易明细 ───────────────────────────────────────────────────────────
+
+router.get('/:id/transactions', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  // 验证卡片归属
+  const card = db.prepare('SELECT id FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId);
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  const { page = 1, pageSize = 20, startDate, endDate, type, status, keyword } = req.query;
+
+  let sql = 'SELECT * FROM transactions WHERE card_id = ? AND user_id = ?';
+  const params: any[] = [req.params.id, req.user!.userId];
+
+  if (startDate) { sql += ' AND txn_time >= ?'; params.push(startDate); }
+  if (endDate) { sql += ' AND txn_time <= ?'; params.push(endDate + ' 23:59:59'); }
+  if (type) { sql += ' AND txn_type = ?'; params.push(type); }
+  if (status !== undefined && status !== '') { sql += ' AND status = ?'; params.push(Number(status)); }
+  if (keyword) { sql += ' AND txn_no LIKE ?'; params.push(`%${keyword}%`); }
+
+  const totalSql = sql.replace('SELECT *', 'SELECT COUNT(*) as c');
+  const total = ((db.prepare(totalSql).get(...params)) as any)?.c || 0;
+
+  const offset = (Number(page) - 1) * Number(pageSize);
+  const list = db.prepare(sql + ' ORDER BY txn_time DESC LIMIT ? OFFSET ?').all(...params, Number(pageSize), offset);
+
+  const typeMap: Record<string, string> = {
+    TOPUP: '充值', CONSUME: '消费', AUTH: '授权', CAPTURE: '捕获',
+    REFUND: '退款', CANCEL_REFUND: '退款', TRANSFER_IN: '转入',
+    WITHDRAWAL: '提现', FEE: '手续费', VOID: '撤销',
+  };
+  const statusMap: Record<number, string> = {
+    0: '处理中', 1: '成功', 2: '失败', 3: '撤销',
+  };
+
+  const mapped = list.map((r: any) => ({
+    id: r.id,
+    transactionDate: new Date(r.txn_time).toISOString().replace('T', ' ').slice(0, 19),
+    transactionType: typeMap[r.txn_type] || r.txn_type,
+    amount: Number(r.amount).toFixed(2),
+    currency: r.currency || 'USD',
+    status: r.status,
+    statusText: statusMap[r.status] || '未知',
+    transactionNo: r.txn_no,
+    merchantName: r.merchant_name || '',
+    remark: '',
+  }));
+
+  res.json({
+    code: 0,
+    message: 'success',
+    data: { list: mapped, total, page: Number(page), pageSize: Number(pageSize) },
+    timestamp: Date.now(),
+  });
+});
+
+// ── 操作记录 ───────────────────────────────────────────────────────────
+
+router.get('/:id/operations', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  // 验证卡片归属
+  const card = db.prepare('SELECT id, created_at FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  const { page = 1, pageSize = 20 } = req.query;
+  const records: any[] = [];
+
+  // 1. 开卡记录
+  records.push({
+    createdAt: new Date(card.created_at).toISOString().replace('T', ' ').slice(0, 19),
+    operationType: '开卡',
+    operator: '当前用户',
+    result: '成功',
+    remark: '',
+  });
+
+  // 2. 交易记录中的操作
+  const txnOps = db.prepare(
+    `SELECT txn_time, txn_type, amount, status, txn_no FROM transactions
+     WHERE card_id = ? AND user_id = ? ORDER BY txn_time DESC`
+  ).all(req.params.id, req.user!.userId) as any[];
+
+  const txnTypeLabel: Record<string, string> = {
+    TOPUP: '充值', CONSUME: '消费', AUTH: '授权', REFUND: '退款',
+    CANCEL_REFUND: '退款', TRANSFER_IN: '转入', FEE: '手续费',
+  };
+  const txnStatusLabel: Record<number, string> = {
+    0: '处理中', 1: '成功', 2: '失败', 3: '撤销',
+  };
+
+  for (const t of txnOps) {
+    records.push({
+      createdAt: new Date(t.txn_time).toISOString().replace('T', ' ').slice(0, 19),
+      operationType: txnTypeLabel[t.txn_type] || t.txn_type,
+      operator: '系统',
+      result: txnStatusLabel[t.status] || '未知',
+      remark: t.txn_no ? `流水号: ${t.txn_no}` : '',
+    });
+  }
+
+  // 3. UQPay 充值记录
+  const uqpayOrders = db.prepare(
+    `SELECT created_at, amount, status, error_message FROM uqpay_recharge_orders
+     WHERE card_id = ? ORDER BY created_at DESC`
+  ).all(req.params.id) as any[];
+
+  for (const o of uqpayOrders) {
+    records.push({
+      createdAt: new Date(o.created_at).toISOString().replace('T', ' ').slice(0, 19),
+      operationType: '渠道充值',
+      operator: '系统',
+      result: o.status === 'SUCCESS' ? '成功' : o.status === 'FAILED' ? '失败' : o.status === 'PENDING' ? '处理中' : o.status,
+      remark: o.error_message || '',
+    });
+  }
+
+  // 排序：按时间倒序
+  records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const total = records.length;
+  const offset = (Number(page) - 1) * Number(pageSize);
+  const paged = records.slice(offset, offset + Number(pageSize));
+
+  res.json({
+    code: 0,
+    message: 'success',
+    data: { list: paged, total },
+    timestamp: Date.now(),
+  });
+});
+
 // ── 查看完整卡面信息 ────────────────────────────────────────────────────────
 // Secure iFrame 模式: https://docs.uqpay.com/docs/secure-iframe-guide
 //

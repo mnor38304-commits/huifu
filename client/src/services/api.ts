@@ -72,6 +72,11 @@ export const freezeCard = (id: number) => api.post(`/cards/${id}/freeze`)
 export const unfreezeCard = (id: number) => api.post(`/cards/${id}/unfreeze`)
 export const cancelCard = (id: number) => api.post(`/cards/${id}/cancel`)
 
+// ── 卡片详情弹窗 ─────────────────────────────────────────────────────────────
+export const getCardEnhancedDetail = (id: number) => api.get(`/cards/${id}/detail`)
+export const getCardTransactions = (id: number, params: any) => api.get(`/cards/${id}/transactions`, { params })
+export const getCardOperations = (id: number, params: any) => api.get(`/cards/${id}/operations`, { params })
+
 // ── Transactions ─────────────────────────────────────────────────────────────
 export const getTransactions = (params: any) => api.get('/transactions', { params })
 export const getTransactionDetail = (id: number) => api.get(`/transactions/${id}`)

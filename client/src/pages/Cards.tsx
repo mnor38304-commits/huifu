@@ -3,6 +3,7 @@ import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, P
 import { PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, WalletOutlined, TransactionOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard, cancelCard, topupCard } from '../services/api'
+import CardDetailModal from '../components/CardDetailModal'
 
 const { Option } = Select
 
@@ -15,6 +16,10 @@ const Cards: React.FC = () => {
   const [createModalVisible, setCreateModalVisible] = useState(false)
   const [creating, setCreating] = useState(false)
   const [form] = Form.useForm()
+
+  // Card detail modal state
+  const [detailModalCardId, setDetailModalCardId] = useState<number | null>(null)
+  const [detailModalVisible, setDetailModalVisible] = useState(false)
 
   useEffect(() => {
     loadCards()
@@ -129,6 +134,16 @@ const Cards: React.FC = () => {
     setTopupModalVisible(true)
   }
 
+  const openCardDetail = (record: any) => {
+    setDetailModalCardId(record.id)
+    setDetailModalVisible(true)
+  }
+
+  const closeCardDetail = () => {
+    setDetailModalVisible(false)
+    setDetailModalCardId(null)
+  }
+
   const handleTopup = async () => {
     if (!topupCardId) return
     const values = await topupForm.validateFields()
@@ -183,7 +198,7 @@ const Cards: React.FC = () => {
       key: 'card_no_masked',
       render: (text: string, record: any) => (
         <Space>
-          <a onClick={() => navigate(`/cards/${record.id}`)}>{text}</a>
+          <a onClick={() => openCardDetail(record)}>{text}</a>
         </Space>
       )
     },
@@ -226,7 +241,7 @@ const Cards: React.FC = () => {
       key: 'action',
       render: (_: any, record: any) => (
         <Space size={4} wrap>
-          <Button type="link" size="small" onClick={() => navigate(`/cards/${record.id}`)}>
+          <Button type="link" size="small" onClick={() => openCardDetail(record)}>
             <EyeOutlined /> 详情
           </Button>
           {record.status === 1 && (
@@ -409,6 +424,13 @@ const Cards: React.FC = () => {
           message="充值将从钱包余额中扣除，请确保钱包余额充足。"
         />
       </Modal>
+
+      {/* ── 卡片详情弹窗 ── */}
+      <CardDetailModal
+        cardId={detailModalCardId}
+        visible={detailModalVisible}
+        onClose={closeCardDetail}
+      />
     </div>
   )
 }
