@@ -3,10 +3,20 @@
  *
  * API 网关: https://uat-openapi.geo.sh.cn/ (沙盒) / https://openapi.geo.sh.cn/ (生产)
  * 认证: RSA 1024 + Base64 + Hex 4 参数请求模式
- *   请求 dataContent = privateEncrypt(JSON -> Base64)
- *   响应 result = publicDecrypt(Hex -> Base64 -> JSON)
  *
- * 参考: geo.zip Java 示例 (GeoReq.java, GeoPayCardApplyService.java)
+ * 请求:
+ *   dataContent = privateEncrypt(JSON -> Base64)
+ *   使用 privateKey (我方 RSA 1024 私钥)
+ *
+ * 响应:
+ *   result = publicDecrypt(Hex -> Base64 -> JSON)
+ *   使用 geoPublicKey (GEO App 公钥, GEO 后台不可编辑)
+ *
+ * GEO 后台配置:
+ *   客户公钥 (可编辑) = customerPublicKey, 与 privateKey 配对
+ *   App 公钥 (不可编辑) = geoPublicKey, 用于解密 GEO 响应
+ *
+ * 参考: geo.zip Java 示例
  *   GeoReq.buildParam: privateEncrypt(body, priKey)
  *   GeoPayQryCardService: publicDecrypt(result, pubKey)
  */
@@ -18,8 +28,9 @@ import crypto from 'crypto';
 export interface GeoConfig {
   baseUrl: string;
   userNo: string;
-  privateKey: string;   // RSA 1024 私钥 (PKCS#1 PEM), 用于请求加密
-  publicKey: string;    // RSA 1024 公钥 (PKCS#1 PEM), 用于响应解密
+  privateKey: string;       // 我方 RSA 1024 私钥, 用于请求 dataContent 加密 (privateEncrypt)
+  geoPublicKey: string;     // GEO App 公钥 (不可编辑), 用于响应 result 解密 (publicDecrypt)
+  customerPublicKey: string; // 我方公钥, 和 privateKey 配对, 配置到 GEO 后台客户公钥位置
 }
 
 export interface GeoBin {
@@ -56,13 +67,15 @@ export class GeoSdk {
   private baseUrl: string;
   private userNo: string;
   private privateKey: string;
-  private publicKey: string;
+  private geoPublicKey: string;
+  private customerPublicKey: string;
 
   constructor(config: GeoConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.userNo = config.userNo;
     this.privateKey = config.privateKey;
-    this.publicKey = config.publicKey;
+    this.geoPublicKey = config.geoPublicKey || '';
+    this.customerPublicKey = config.customerPublicKey || '';
   }
 
   // ── 密钥格式化 ──────────────────────────────────────────────────────────
@@ -74,6 +87,7 @@ export class GeoSdk {
 
   private fmtPublicKey(raw: string): string {
     let k = raw.replace(/-----BEGIN .*? KEY-----/g, '').replace(/-----END .*? KEY-----/g, '').replace(/\s+/g, '');
+    // Node.js requires X.509 SPKI format (-----BEGIN PUBLIC KEY-----) for publicDecrypt
     return '-----BEGIN PUBLIC KEY-----\n' + (k.match(/.{1,64}/g)?.join('\n') || k) + '\n-----END PUBLIC KEY-----';
   }
 
@@ -102,10 +116,11 @@ export class GeoSdk {
 
   /**
    * 解密 GEO 返回的 result 字段
+   * 使用 geoPublicKey (GEO App 公钥) 解密
    * 步骤: 按 256 hex 字符分块 -> publicDecrypt -> 拼接 -> Base64 解码 -> JSON
    */
   decryptResponse(hexData: string): any {
-    const pemKey = this.fmtPublicKey(this.publicKey);
+    const pemKey = this.fmtPublicKey(this.geoPublicKey);
     const bufs: Buffer[] = [];
     for (let i = 0; i < hexData.length; i += HEX_CHUNK) {
       const hexChunk = hexData.slice(i, i + HEX_CHUNK);

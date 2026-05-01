@@ -88,7 +88,8 @@ async function getChannelSDK(): Promise<ChannelSDK> {
         baseUrl: baseUrl,
         userNo: geoConfig.userNo,
         privateKey: geoConfig.privateKey,
-        publicKey: geoConfig.publicKey,
+        geoPublicKey: geoConfig.geoPublicKey,
+        customerPublicKey: geoConfig.customerPublicKey || '',
       });
       console.log('[Channel] 使用 GEO 渠道 (RSA 4 参数模式)');
       return { type: 'geo', sdk, channel: geoChannel };
