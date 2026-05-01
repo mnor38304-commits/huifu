@@ -110,7 +110,8 @@ const CardholderManagement: React.FC = () => {
     { title: '邮箱', dataIndex: 'email_masked', width: 140 },
     { title: '手机', dataIndex: 'phone_masked', width: 100 },
     { title: '国家', dataIndex: 'country_code', width: 50 },
-    { title: '证件号', dataIndex: 'id_number_masked', width: 120 },
+    { title: '城市', dataIndex: 'city', width: 80, render: (v: string) => v || '-' },
+    { title: '州/省', dataIndex: 'state', width: 60, render: (v: string) => v || '-' },
     {
       title: '状态', dataIndex: 'status', width: 80,
       render: (v: string) => {
@@ -202,15 +203,14 @@ const CardholderManagement: React.FC = () => {
           <Form.Item name="countryCode" label="国家码" initialValue="US" rules={[{ pattern: /^[A-Z]{2}$/, message: '必须为 2 位大写国家码' }]}>
             <Input placeholder="US" maxLength={2} style={{ width: 100 }} />
           </Form.Item>
-          <Form.Item name="idType" label="证件类型" initialValue={0}>
-            <Select>
-              <Select.Option value={0}>身份证</Select.Option>
-              <Select.Option value={1}>护照</Select.Option>
-              <Select.Option value={2}>驾照</Select.Option>
-            </Select>
+          <Form.Item name="addressLine1" label="详细地址" rules={[{ required: true, message: '必填' }, { min: 2, message: '至少 2 个字符' }]}>
+            <Input placeholder="123 Main Street" />
           </Form.Item>
-          <Form.Item name="idNumber" label="证件号">
-            <Input.Password placeholder="选填" />
+          <Form.Item name="city" label="城市" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="New York" />
+          </Form.Item>
+          <Form.Item name="state" label="州/省" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="NY" />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={addLoading} block>创建持卡人</Button>
@@ -223,7 +223,7 @@ const CardholderManagement: React.FC = () => {
         {!validateResult && !batchResult && (
           <>
             <Alert message="支持 JSON 数组或 CSV 格式，最多 100 条" type="info" style={{ marginBottom: 16 }} />
-            <Input.TextArea rows={8} placeholder={`[{"firstName":"John","lastName":"Doe","email":"john@example.com","phone":"1234567890","countryCode":"US","idType":1,"idNumber":"P123456789"}]`}
+            <Input.TextArea rows={8} placeholder={`[{"firstName":"John","lastName":"Doe","email":"john@example.com","phone":"1234567890","countryCode":"US","addressLine1":"123 Main Street","city":"New York","state":"NY"}]`}
               value={batchRaw} onChange={e => setBatchRaw(e.target.value)} />
             <Button type="primary" onClick={handleBatchValidate} style={{ marginTop: 12 }}>预校验</Button>
           </>
@@ -274,7 +274,9 @@ const CardholderManagement: React.FC = () => {
             <p><strong>邮箱:</strong> {detailData.email_masked}</p>
             <p><strong>手机:</strong> {detailData.phone_masked}</p>
             <p><strong>国家:</strong> {detailData.country_code}</p>
-            <p><strong>证件号:</strong> {detailData.id_number_masked || '-'}</p>
+            <p><strong>详细地址:</strong> {detailData.address_line1 || '-'}</p>
+            <p><strong>城市:</strong> {detailData.city || '-'}</p>
+            <p><strong>州/省:</strong> {detailData.state || '-'}</p>
             <p><strong>状态:</strong> <Tag color={detailData.status === 'ACTIVE' ? 'green' : detailData.status === 'FAILED' ? 'red' : 'blue'}>{detailData.status}</Tag></p>
             <p><strong>KYC:</strong> <Tag color={detailData.kyc_status === 'APPROVED' ? 'green' : detailData.kyc_status === 'REJECTED' ? 'red' : 'blue'}>{detailData.kyc_status || '-'}</Tag></p>
             <p><strong>创建时间:</strong> {detailData.created_at ? new Date(detailData.created_at).toLocaleString('zh-CN') : '-'}</p>

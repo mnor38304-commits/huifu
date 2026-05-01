@@ -20,6 +20,7 @@ import db from '../db';
 import { adminAuth, AdminRequest, requireAdminRole, writeAdminLog } from './admin-auth';
 import { getCardholderAdapter, listChannelCodes } from '../services/cardholder-adapters';
 import { dogpayMaskUtils, checkDogPayCreateCardholderConfig } from '../services/cardholder-adapters/dogpay-cardholder-adapter';
+// maskIdNumber/hashIdNumber 不再使用，证件字段已替换为地址字段
 
 const router = Router();
 
@@ -59,7 +60,6 @@ router.get('/', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => 
     ...r,
     email_masked: dogpayMaskUtils.maskEmail(r.email || ''),
     phone_masked: dogpayMaskUtils.maskPhone(r.phone || ''),
-    id_number_masked: r.id_number_masked || dogpayMaskUtils.maskIdNumber(r.id_number_hash || ''),
     provider_payload_json: undefined,
     provider_response_json: undefined,
     raw_response_json: undefined,
@@ -109,7 +109,6 @@ router.get('/:id', requireAdminRole('admin', 'super'), (req: AdminRequest, res) 
       ...cardholder,
       email_masked: dogpayMaskUtils.maskEmail(cardholder.email || ''),
       phone_masked: dogpayMaskUtils.maskPhone(cardholder.phone || ''),
-      id_number_masked: cardholder.id_number_masked || dogpayMaskUtils.maskIdNumber(cardholder.id_number_hash || ''),
       provider_payload_json: cardholder.provider_payload_json ? JSON.parse(cardholder.provider_payload_json) : null,
       provider_response_json: cardholder.provider_response_json ? JSON.parse(cardholder.provider_response_json) : null,
       raw_response_json: cardholder.raw_response_json ? JSON.parse(cardholder.raw_response_json) : null,
@@ -151,16 +150,14 @@ router.post('/', requireAdminRole('admin', 'super'), async (req: AdminRequest, r
 
     const dbResult = db.prepare(`
       INSERT INTO cardholders (channel_code, external_id, first_name, last_name, email, phone,
-        country_code, id_type, id_number_masked, id_number_hash, status, kyc_status,
+        country_code, address_line1, city, state, status, kyc_status,
         provider_status, provider_kyc_status, provider_response_json, raw_response_json,
         created_by_admin_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cc, result.externalId, normalized.firstName, normalized.lastName,
       normalized.email, normalized.phone,
-      normalized.countryCode, normalized.idType,
-      dogpayMaskUtils.maskIdNumber(normalized.idNumber),
-      normalized.idNumber ? dogpayMaskUtils.hashIdNumber(normalized.idNumber) : null,
+      normalized.countryCode, normalized.addressLine1, normalized.city, normalized.state,
       result.status, result.kycStatus,
       result.status, result.kycStatus,
       result.rawResponse ? JSON.stringify(result.rawResponse) : null,
@@ -188,15 +185,13 @@ router.post('/', requireAdminRole('admin', 'super'), async (req: AdminRequest, r
 
     db.prepare(`
       INSERT INTO cardholders (channel_code, first_name, last_name, email, phone,
-        country_code, id_type, id_number_masked, id_number_hash, status, error_message,
+        country_code, address_line1, city, state, status, error_message,
         provider_status, created_by_admin_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FAILED', ?, 'FAILED', ?)
     `).run(
       cc, normalized.firstName, normalized.lastName,
       normalized.email, normalized.phone,
-      normalized.countryCode, normalized.idType,
-      dogpayMaskUtils.maskIdNumber(normalized.idNumber),
-      normalized.idNumber ? dogpayMaskUtils.hashIdNumber(normalized.idNumber) : null,
+      normalized.countryCode, normalized.addressLine1, normalized.city, normalized.state,
       msg, req.admin?.id || 0,
     );
 
@@ -241,7 +236,6 @@ router.post('/batch/validate', requireAdminRole('admin', 'super'), (req: AdminRe
         ...v.data,
         email_masked: dogpayMaskUtils.maskEmail(v.data.email),
         phone_masked: dogpayMaskUtils.maskPhone(v.data.phone),
-        idNumberMasked: v.data.idNumber ? dogpayMaskUtils.maskIdNumber(v.data.idNumber) : '',
       } : null,
     };
   });
@@ -304,16 +298,14 @@ router.post('/batch/create', requireAdminRole('admin', 'super'), async (req: Adm
 
       const dbResult = db.prepare(`
         INSERT INTO cardholders (channel_code, external_id, first_name, last_name, email, phone,
-          country_code, id_type, id_number_masked, id_number_hash, status, kyc_status,
+          country_code, address_line1, city, state, status, kyc_status,
           provider_status, provider_kyc_status, provider_response_json, raw_response_json,
           created_by_admin_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         cc, dogpayResult.externalId, normalized.firstName, normalized.lastName,
         normalized.email, normalized.phone,
-        normalized.countryCode, normalized.idType,
-        dogpayMaskUtils.maskIdNumber(normalized.idNumber),
-        normalized.idNumber ? dogpayMaskUtils.hashIdNumber(normalized.idNumber) : null,
+        normalized.countryCode, normalized.addressLine1, normalized.city, normalized.state,
         dogpayResult.status, dogpayResult.kycStatus,
         dogpayResult.status, dogpayResult.kycStatus,
         dogpayResult.rawResponse ? JSON.stringify(dogpayResult.rawResponse) : null,
@@ -336,15 +328,13 @@ router.post('/batch/create', requireAdminRole('admin', 'super'), async (req: Adm
 
       db.prepare(`
         INSERT INTO cardholders (channel_code, first_name, last_name, email, phone,
-          country_code, id_type, id_number_masked, id_number_hash, status, error_message,
+          country_code, address_line1, city, state, status, error_message,
           provider_status, created_by_admin_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FAILED', ?, 'FAILED', ?)
       `).run(
         cc, normalized.firstName, normalized.lastName,
         normalized.email, normalized.phone,
-        normalized.countryCode, normalized.idType,
-        dogpayMaskUtils.maskIdNumber(normalized.idNumber),
-        normalized.idNumber ? dogpayMaskUtils.hashIdNumber(normalized.idNumber) : null,
+        normalized.countryCode, normalized.addressLine1, normalized.city, normalized.state,
         msg, req.admin?.id || 0,
       );
     }

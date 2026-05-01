@@ -50,8 +50,9 @@ export interface NormalizedCardholderInput {
   email: string;
   phone: string;
   countryCode: string;
-  idType?: number;
-  idNumber?: string;
+  addressLine1: string;
+  city: string;
+  state: string;
   /** 渠道专有扩展字段 */
   extra?: Record<string, any>;
 }

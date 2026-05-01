@@ -36,9 +36,9 @@ export interface DogPayCardholderCreate {
   email: string;
   phone: string;
   countryCode?: string;
-  /** 证件类型: 0=身份证 1=护照 2=驾照 */
-  idType?: number;
-  idNumber?: string;
+  addressLine1?: string;
+  city?: string;
+  state?: string;
 }
 
 export interface DogPayCardholderList {
@@ -111,8 +111,9 @@ export class DogPaySDK {
       email: params.email,
       phone: params.phone,
       country_code: params.countryCode || 'US',
-      id_type: params.idType ?? 0,
-      id_number: params.idNumber || '',
+      address_line1: params.addressLine1 || '',
+      city: params.city || '',
+      state: params.state || '',
     });
     return this.mapCardholder(data.data || data);
   }
