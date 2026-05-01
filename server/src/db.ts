@@ -366,6 +366,10 @@ export async function initDatabase(): Promise<Database> {
     try { db.run("ALTER TABLE cardholders ADD COLUMN address_line1 TEXT"); } catch (_) {}
     try { db.run("ALTER TABLE cardholders ADD COLUMN city TEXT"); } catch (_) {}
     try { db.run("ALTER TABLE cardholders ADD COLUMN state TEXT"); } catch (_) {}
+    // 卡片使用到期 / 自动冻结字段（幂等迁移）
+    try { db.run("ALTER TABLE cards ADD COLUMN usage_expires_at TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE cards ADD COLUMN auto_frozen_at TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE cards ADD COLUMN auto_frozen_reason TEXT"); } catch (_) {}
   } catch (e) {}
 
   saveDatabase();
