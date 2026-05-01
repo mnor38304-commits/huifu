@@ -208,10 +208,11 @@ export class GeoSdk {
       dataContent,
     };
 
+    console.log('[GEO]', path, 'req:', JSON.stringify(this.sanitizeLog(requestBody)).slice(0, 300));
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(this.sanitizeLog(requestBody)),
+      body: JSON.stringify(requestBody),
     } as any);
 
     if (!response.ok) {
@@ -248,7 +249,7 @@ export class GeoSdk {
   // ── 账户余额 ──────────────────────────────────────────────────────────
 
   async getAccountBalance(): Promise<GeoAccountBalance> {
-    const data = await this.request<any>('POST', '/open-api/v1/account/balance');
+    const data = await this.request<any>('POST', '/account/balance');
     return {
       availableBalance: data.availableBalance ?? data.available_balance ?? data.available ?? 0,
       pendingBalance: data.pendingBalance ?? data.pending_balance ?? data.pending ?? 0,
@@ -259,7 +260,7 @@ export class GeoSdk {
   // ── 可用 BIN ─────────────────────────────────────────────────────────
 
   async listBins(): Promise<GeoBin[]> {
-    const data = await this.request<any>('POST', '/open-api/v1/cards/bins');
+    const data = await this.request<any>('POST', '/cards/bins');
     const list = Array.isArray(data) ? data : (data.list || data.data || []);
     return list.map((item: any) => this.normalizeBin(item));
   }
@@ -297,7 +298,7 @@ export class GeoSdk {
   // ── 额度信息 ──────────────────────────────────────────────────────────
 
   async getSpendingLimit(): Promise<GeoSpendingLimit> {
-    const data = await this.request<any>('POST', '/open-api/v1/cards/spending/limit');
+    const data = await this.request<any>('POST', '/cards/spending/limit');
     return {
       limit: data.limit ?? data.spendingLimit ?? 0,
       netConsumption: data.netConsumption ?? data.net_consumption ?? 0,
@@ -320,7 +321,7 @@ export class GeoSdk {
       body.metadata = params.metadata;
     }
 
-    const data = await this.request<any>('POST', '/open-api/v1/cards', body);
+    const data = await this.request<any>('POST', '/cards', body);
     return this.normalizeCard(data);
   }
 

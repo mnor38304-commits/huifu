@@ -1,0 +1,48 @@
+=== UQPay 灰度观察复核报告 ===
+执行时间: 2026-05-01 15:38:51
+
+=== 1. 系统检查 ===
+--- PM2 vcc-server 状态 ---
+│ status            │ online                                      │
+│ restarts          │ 127                                         │
+│ uptime            │ 3h                                          │
+│ unstable restarts │ 0                                           │
+--- Nginx 状态 ---
+active
+--- Crontab UQPay 任务 ---
+*/10 * * * * cd /opt/huifu/server && /usr/bin/flock -n /tmp/uqpay-reconcile.lock npm run reconcile:uqpay-recharges -- --max=10 --min-age=5 >> /var/log/uqpay-reconcile.log 2>&1
+*/5 * * * * cd /opt/huifu/server && /usr/bin/flock -n /tmp/uqpay-alert.lock npm run alert:pending-orders -- --max=50 --hours=24 >> /var/log/uqpay-alert.log 2>&1
+--- Health 端点 ---
+HTTP Status: 404
+
+=== 2. 订单检查 ===
+--- 订单状态分布 ---
+--- id=8 和 id=9 订单状态 ---
+--- 最近5条订单 ---
+
+=== 3. 钱包与卡检查 ===
+--- user1 和 user13 余额 ---
+--- cards.id=6 和 id=7 余额 ---
+--- 总钱包余额和UQPay卡总余额 ---
+
+=== 4. 监控检查 ===
+--- reconcile_alerts 计数 ---
+--- 日志错误检查（最近5行）---
+--- 敏感信息检查 ---
+可疑敏感行数: 0
+
+=== 5. 后台管理 API 检查 ===
+--- Admin JWT 访问 /api/admin/uqpay/recharge-orders ---
+HTTP Status: 200
+响应前300字符:
+{"code":0,"data":{"list":[{"id":10,"unique_request_id":"b2f7066f************************0134","card_id":8,"user_id":9,"amount":5,"currency":"USD","status":"SUCCESS","wallet_record_id":"TXN1777539525379721","card_txn_id":null,"error_message":null,"created_at":"2026-04-30 08:58:45","updated_at":"2026-
+=== 6. 开关配置检查 ===
+--- .env 关键配置 ---
+ENABLE_WALLET_CONVERT=true
+WALLET_CONVERT_TEST_USER_IDS=1,2,13,9
+ENABLE_UQPAY_REAL_RECHARGE=true
+UQPAY_RECHARGE_TEST_USER_IDS=1,2,13,9
+
+=== 复核结论 ===
+报告已保存至: /opt/huifu/server/src/scripts/review-report-202605011538.txt
+=== 复核完成 Fri May  1 03:38:52 PM CST 2026 ===

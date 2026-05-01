@@ -235,7 +235,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
   if (channel.type !== 'mock') {
     allowedBins = allowedBins.filter((bin: any) => !!bin.external_bin_id);
-    channelCode = channel.type === 'uqpay' ? 'UQPAY' : 'DOGPAY';
+    channelCode = channel.type === 'uqpay' ? 'UQPAY' : channel.type === 'geo' ? 'GEO' : 'DOGPAY';
   }
 
   const selectedBin = binId

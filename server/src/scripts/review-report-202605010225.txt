@@ -1,0 +1,65 @@
+UQPay 灰度上线 24 小时观察复核报告
+=====================================
+执行时间: 2026-05-01 02:25 GMT+8
+服务器: 43.160.217.82  /opt/huifu  PM2: vcc-server
+=====================================
+
+【1. 系统状态】
+  health 端点: ✅ {"status":"ok"} (GET /health)
+  PM2 vcc-server: ✅ online | restarts:117 | uptime:8h | unstable_restarts:0
+  Nginx:        ✅ active
+  Crontab UQPay 任务数: ✅ 2 条
+    */10 * * * *  uqpay-reconcile
+    */5  * * * *  uqpay-alert
+  DB MD5: a35057951a661dc9537f45973478bc10
+
+【2. 订单状态】
+  状态分布: ✅ SUCCESS=7, FAILED=3, 无 PENDING/UNKNOWN
+  id=8:  ✅ SUCCESS | user_id=13 | amount=1 | 2026-04-30 06:01:24
+  id=9:  ✅ SUCCESS | user_id=1  | amount=1 | 2026-04-30 06:13:18
+  最近 5 条: ✅ 全部 SUCCESS (id:10/9/8/7/6)
+
+【3. 钱包与卡余额】
+  user1  (wallet id=5):  balance_usd=0   | balance_usdt=4    ✅ 无异常
+  user13 (wallet id=8):  balance_usd=90  | balance_usdt=106.5 ✅ 无异常
+  card id=6 (user13):   balance=103 | status=1 ✅
+  card id=7 (user1):    balance=101 | status=1 ✅
+  钱包总额: sum_usd=99 | sum_usdt=110.5
+  UQPay 卡总余额 (channel_code=UQPAY): 412 (7 张卡)
+  非UQPay卡: balance=10 (1 张, channel_code=NULL)
+
+【4. 监控】
+  reconcile_alerts 计数: ✅ 0 条
+  /var/log/uqpay-reconcile.log 最近错误: ✅ 无
+  /var/log/uqpay-alert.log 最近错误:   ✅ 无
+  PM2 日志敏感词 (api_key/secret/cvv): ✅ 0 条
+  日志敏感信息泄露检查: ✅ 通过
+
+【5. 后台 Admin JWT 访问】
+  ❌ /api/admin/uqpay/recharge-orders 返回 401 "Token无效或已过期"
+  原因待排查:
+    - admins 表存在 id=1, username=admin, role=super
+    - JWT payload {id:1,username:"admin",role:"super"} 与 sign 代码一致
+    - JWT_SECRET=vcc-super-secret-jwt-key-2026 (env 与 .env 一致)
+    - 推测: 运行时 JWT_SECRET 与签名时使用的 secret 不匹配，或 token 传递方式有误
+  建议: 通过 /api/admin/auth/login 用正确密码登录后，用返回的 admin_token cookie 访问
+
+【6. 开关与白名单】
+  ENABLE_WALLET_CONVERT:   ✅ true
+  ENABLE_UQPAY_REAL_RECHARGE: ✅ true
+  UQPAY_RECHARGE_TEST_USER_IDS: 1,2,13,9
+    ⚠️ 注意: 白名单含 user9（上次报告已记录为"预期扩展"）
+  UQPAY_RECHARGE_LIMIT 相关 env: 未见异常变更
+
+【7. 结论】
+  ✅ 系统稳定，无 PENDING/UNKNOWN 订单积压
+  ✅ 钱包与卡余额无异常
+  ✅ 监控告警计数为 0，日志无异常
+  ✅ 灰度开关正常，白名单含 1,2,13,9
+  ❌ 后台 Admin API JWT 验证待修复（不影响用户端充值流程）
+  ⚠️ 白名单含 user9，请确认是否继续执行此配置
+
+=====================================
+报告生成: 2026-05-01 02:25 GMT+8
+自动化任务: automation-1777529872577
+=====================================
