@@ -37,6 +37,8 @@ export interface GeoBin {
   createdAt?: string;
   order?: string;
   supportAirlines?: boolean | null;
+  modeType?: 'SINGLE' | 'SHARE' | string;
+  isSingle: boolean;
 }
 
 export interface GeoSpendingLimit {
@@ -64,7 +66,7 @@ export interface GeoCardCreateParams {
   currency?: string;
   userId: number;
   metadata?: Record<string, string>;
-  shareId?: string;
+  // SINGLE 卡模式：不传 shareId/shareGroupId/groupId/poolId
 }
 
 export interface GeoCard {
@@ -174,7 +176,22 @@ export class GeoSdk {
     return list.map((item: any) => this.normalizeBin(item));
   }
 
+  /**
+   * 只返回 SINGLE 模式的 BIN（独立额度卡）
+   * SHARE / UNKNOWN 模式 BIN 被排除
+   */
+  getSingleBins(bins: GeoBin[]): GeoBin[] {
+    return bins.filter(b => b.isSingle === true);
+  }
+
   private normalizeBin(raw: any): GeoBin {
+    // Determine mode type from GEO fields
+    // Possible GEO field names: mode, modeType, cardMode, cardType, type, accountType, settlementType, shareType
+    const modeValue = raw.mode || raw.modeType || raw.cardMode || raw.accountType || raw.settlementType || raw.shareType || '';
+    const modeUpper = (modeValue || '').toString().toUpperCase();
+    const isSingle = modeUpper === 'SINGLE' || modeUpper === 'INDIVIDUAL' || modeUpper === 'SINGLE_ACCOUNT';
+    const modeType = isSingle ? 'SINGLE' as const : (['SHARE', 'GROUP', 'POOL'].includes(modeUpper) ? 'SHARE' as const : undefined);
+
     return {
       id: raw.id || raw.binId || raw.bin_id || '',
       bin: raw.bin || raw.binCode || raw.bin_code || '',
@@ -190,6 +207,8 @@ export class GeoSdk {
       createdAt: raw.createdAt || raw.created_at || '',
       order: raw.order || '',
       supportAirlines: raw.supportAirlines ?? raw.support_airlines ?? null,
+      modeType,
+      isSingle,
     };
   }
 
@@ -222,23 +241,22 @@ export class GeoSdk {
   // ── 开卡 ──────────────────────────────────────────────────────────────
 
   /**
-   * 创建卡片
+   * 创建 SINGLE 独立额度卡
    *
-   * 输入参数会被映射到 GEO 文档真实字段。
-   * 如果 GEO 文档字段不同，请以此方法内的实际映射为准。
+   * 仅支持 SINGLE 模式：
+   * - 不传 shareId / shareGroupId / groupId / poolId
+   * - 强制传 mode=SINGLE（或 GEO 文档实际 SINGLE 字段）
    */
   async createCard(params: GeoCardCreateParams): Promise<GeoCard> {
-    // 构建 GEO API 请求体
+    // 构建 GEO API 请求体 — 仅 SINGLE 模式参数
     const body: Record<string, unknown> = {
       binId: params.binId,
       cardName: params.cardName,
       cardLimit: params.cardLimit,
       currency: params.currency || 'USD',
+      // 强制 SINGLE 模式（字段名以 GEO 文档为准，这里使用 mode）
+      mode: 'SINGLE',
     };
-
-    if (params.shareId) {
-      body.shareId = params.shareId;
-    }
 
     if (params.metadata && Object.keys(params.metadata).length > 0) {
       body.metadata = params.metadata;

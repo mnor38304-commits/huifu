@@ -392,13 +392,20 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
     try {
       const sdk = channel.sdk as any;
+      // Verify this is a SINGLE BIN
+      if (selectedBin.mode_type && selectedBin.mode_type !== 'SINGLE') {
+        return res.json({
+          code: 400,
+          message: 'GEO 仅支持开通 SINGLE 独立额度卡',
+          timestamp: Date.now()
+        });
+      }
       const geoCard = await sdk.createCard({
         binId: selectedBin.external_bin_id,
         cardName,
         cardLimit: Number(creditLimit),
         currency: geoConfig.defaultCurrency || 'USD',
         userId: req.user!.userId,
-        shareId: geoConfig.defaultShareId || undefined,
       });
 
       externalId = geoCard.cardId || '';
