@@ -14,8 +14,8 @@
  *   result 字段 (Hex) → RSA 1024 解密 → Base64 解码 → JSON
  *
  * 密钥说明:
- *   - appPublicKey = GEO 平台公钥 (由 GEO 提供, 用于加密请求 + 解密响应)
- *   - 当前不需要 App 私钥 (GEO 使用平台公钥即可实现双向加解密)
+ *   - appPublicKey = GEO 平台公钥 = 客户公钥 (App 公钥与客户公钥为同一把 RSA 1024 公钥)
+ *   - 由 GEO 签发,用于: 1) 请求 dataContent 加密 (publicEncrypt) 2) 响应 result 解密 (publicDecrypt)
  */
 
 import crypto from 'crypto';
@@ -270,7 +270,11 @@ export class GeoSdk {
   }
 
   private normalizeBin(raw: any): GeoBin {
-    const modeValue = raw.mode || raw.modeType || raw.cardMode || raw.accountType || raw.settlementType || raw.shareType || '';
+    // GEO real field: cardType (1=常规卡/SINGLE), also check common names
+    let modeValue = '';
+    if (raw.cardType === 1 || raw.cardType === '1') { modeValue = 'SINGLE'; }
+    else if (raw.cardType === 2 || raw.cardType === '2') { modeValue = 'SHARE'; }
+    else { modeValue = raw.mode || raw.modeType || raw.cardMode || raw.accountType || raw.settlementType || raw.shareType || ''; }
     const modeUpper = (modeValue || '').toString().toUpperCase();
     const isSingle = modeUpper === 'SINGLE' || modeUpper === 'INDIVIDUAL' || modeUpper === 'SINGLE_ACCOUNT';
     const modeType = isSingle ? 'SINGLE' as const : (['SHARE', 'GROUP', 'POOL'].includes(modeUpper) ? 'SHARE' as const : undefined);
@@ -280,7 +284,7 @@ export class GeoSdk {
       bin: raw.bin || raw.binCode || raw.bin_code || '',
       organization: raw.organization || raw.cardBrand || raw.card_brand || raw.issuer || '',
       issuerCountry: raw.issuerCountry || raw.issuer_country || raw.country || null,
-      type: raw.type || raw.cardType || raw.card_type || '',
+      type: String(raw.type || raw.cardType || raw.card_type || ''),
       limit: raw.limit ?? raw.cardLimit ?? raw.card_limit ?? raw.spendingLimit ?? 0,
       currency: raw.currency || 'USD',
       supportAvs: raw.supportAvs ?? raw.support_avs ?? false,
@@ -314,7 +318,7 @@ export class GeoSdk {
       cardName: params.cardName,
       cardLimit: params.cardLimit,
       currency: params.currency || 'USD',
-      mode: 'SINGLE',
+      cardType: 1, // 1=常规卡(独立额度/SINGLE)，GEO 官方字段
     };
 
     if (params.metadata && Object.keys(params.metadata).length > 0) {
