@@ -68,6 +68,35 @@ router.get('/', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => 
   res.json({ code: 0, data: { list: masked, total, page: Number(page), pageSize: Number(pageSize) }, timestamp: Date.now() });
 });
 
+// ── 3. 渠道 Schema ────────────────────────────────────────────────────────
+
+router.get('/schema/list', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
+  res.json({ code: 0, data: listChannelCodes(), timestamp: Date.now() });
+});
+
+router.get('/schema', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
+  const channelCode = String(req.query.channelCode || 'DOGPAY').toUpperCase();
+  const { adapter, error } = getAdapter(channelCode);
+  if (!adapter) {
+    return res.json({ code: 400, message: error, timestamp: Date.now() });
+  }
+  res.json({ code: 0, data: adapter.getSchema(), timestamp: Date.now() });
+});
+
+// ── 7. 下载 CSV 模板 ─────────────────────────────────────────────────────
+
+router.get('/template/download', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
+  const channelCode = String(req.query.channelCode || 'DOGPAY').toUpperCase();
+  const { adapter, error } = getAdapter(channelCode);
+  if (!adapter) {
+    return res.json({ code: 400, message: error, timestamp: Date.now() });
+  }
+  const csv = '\uFEFF' + adapter.getCsvTemplate();
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="cardholder-template-${channelCode.toLowerCase()}.csv"`);
+  res.send(csv);
+});
+
 // ── 2. 持卡人详情 ──────────────────────────────────────────────────────────
 
 router.get('/:id', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
@@ -87,21 +116,6 @@ router.get('/:id', requireAdminRole('admin', 'super'), (req: AdminRequest, res) 
     },
     timestamp: Date.now(),
   });
-});
-
-// ── 3. 渠道 Schema ────────────────────────────────────────────────────────
-
-router.get('/schema/list', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
-  res.json({ code: 0, data: listChannelCodes(), timestamp: Date.now() });
-});
-
-router.get('/schema', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
-  const channelCode = String(req.query.channelCode || 'DOGPAY').toUpperCase();
-  const { adapter, error } = getAdapter(channelCode);
-  if (!adapter) {
-    return res.json({ code: 400, message: error, timestamp: Date.now() });
-  }
-  res.json({ code: 0, data: adapter.getSchema(), timestamp: Date.now() });
 });
 
 // ── 4. 单个创建持卡人 ─────────────────────────────────────────────────────
@@ -347,20 +361,6 @@ router.post('/batch/create', requireAdminRole('admin', 'super'), async (req: Adm
     data: { total: rows.length, success, failed, results },
     timestamp: Date.now(),
   });
-});
-
-// ── 7. 下载 CSV 模板 ─────────────────────────────────────────────────────
-
-router.get('/template/download', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
-  const channelCode = String(req.query.channelCode || 'DOGPAY').toUpperCase();
-  const { adapter, error } = getAdapter(channelCode);
-  if (!adapter) {
-    return res.json({ code: 400, message: error, timestamp: Date.now() });
-  }
-  const csv = '\uFEFF' + adapter.getCsvTemplate();
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="cardholder-template-${channelCode.toLowerCase()}.csv"`);
-  res.send(csv);
 });
 
 export default router;
