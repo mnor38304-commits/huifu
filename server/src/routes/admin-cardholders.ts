@@ -22,21 +22,33 @@ const router = Router();
 // 所有路由需要管理员认证
 router.use(adminAuth);
 
-// ── 工具: 获取 DogPay SDK ────────────────────────────────────────────────────
+// ── 工具: 获取 DogPay SDK（含配置完整性校验）───────────────────────────────
 
 async function getDogPaySDK() {
   const channel = db.prepare(
-    "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay' AND status = 1"
+    "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay'"
   ).get() as any;
-  if (!channel) return null;
-  const { DogPaySDK } = await import('../channels/dogpay');
+  if (!channel) {
+    throw new Error('DogPay 渠道未配置，请先在「渠道对接」页面添加 DogPay 渠道');
+  }
+  if (Number(channel.status) !== 1) {
+    throw new Error('DogPay 渠道未启用（status≠1），请先在「渠道对接」页面启用');
+  }
+  if (!channel.api_base_url) {
+    throw new Error('DogPay 渠道 api_base_url 未配置');
+  }
   let config: Record<string, string> = {};
   try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
-  return new DogPaySDK({
-    appId: config.appId || channel.api_key || '',
-    appSecret: config.appSecret || channel.api_secret || '',
-    apiBaseUrl: channel.api_base_url || '',
-  });
+  const appId = config.appId || channel.api_key || '';
+  const appSecret = config.appSecret || channel.api_secret || '';
+  if (!appId) {
+    throw new Error('DogPay 渠道 appId 未配置，请在 config_json 中设置');
+  }
+  if (!appSecret) {
+    throw new Error('DogPay 渠道 appSecret 未配置，请在 config_json 中设置');
+  }
+  const { DogPaySDK } = await import('../channels/dogpay');
+  return new DogPaySDK({ appId, appSecret, apiBaseUrl: channel.api_base_url });
 }
 
 // ── 工具: 脱敏 ────────────────────────────────────────────────────────────────
@@ -213,14 +225,16 @@ router.post('/', requireAdminRole('admin', 'super'), async (req: AdminRequest, r
     return res.json({ code: 400, message: `该持卡人已存在 (id=${existing.id})`, timestamp: Date.now() });
   }
 
-  const sdk = await getDogPaySDK();
-  if (!sdk) {
-    return res.json({ code: 503, message: 'DogPay 渠道未配置，请先配置渠道参数', timestamp: Date.now() });
+  let sdk: any;
+  try {
+    sdk = await getDogPaySDK();
+  } catch (err: any) {
+    const msg = (err.message || '').slice(0, 300);
+    return res.json({ code: 503, message: msg, timestamp: Date.now() });
   }
 
   try {
-    const { DogPaySDK } = await import('../channels/dogpay');
-    const result = await (sdk as any).createCardholder({
+    const result = await sdk.createCardholder({
       firstName: cleaned.firstName,
       lastName: cleaned.lastName,
       email: cleaned.email,
@@ -337,12 +351,14 @@ router.post('/batch/create', requireAdminRole('admin', 'super'), async (req: Adm
     return res.json({ code: 400, message: '单次最多创建 100 条', timestamp: Date.now() });
   }
 
-  const sdk = await getDogPaySDK();
-  if (!sdk) {
-    return res.json({ code: 503, message: 'DogPay 渠道未配置，请先配置渠道参数', timestamp: Date.now() });
+  let sdk: any;
+  try {
+    sdk = await getDogPaySDK();
+  } catch (err: any) {
+    const msg = (err.message || '').slice(0, 300);
+    return res.json({ code: 503, message: msg, timestamp: Date.now() });
   }
 
-  const { DogPaySDK } = await import('../channels/dogpay');
   const results: any[] = [];
   let success = 0;
   let failed = 0;
