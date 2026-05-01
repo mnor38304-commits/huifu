@@ -431,6 +431,10 @@ router.get('/:id/detail', authMiddleware, (req: AuthRequest, res: Response<ApiRe
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
   }
 
+  // 🔒 安全响应头：敏感信息不缓存
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+
   // 累计消费：成功消费/授权交易
   const spendRow = db.prepare(`
     SELECT COALESCE(SUM(amount), 0) as total
@@ -675,6 +679,10 @@ router.get('/:id/reveal', authMiddleware, async (req: AuthRequest, res: Response
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
   }
+
+  // 🔒 安全响应头：禁止缓存完整卡面信息
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
 
   // UQPay 渠道 → Secure iFrame 模式，不返回明文卡号
   if (card.channel_code === 'UQPAY' && card.external_id) {
