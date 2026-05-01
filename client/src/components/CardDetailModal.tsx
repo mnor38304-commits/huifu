@@ -296,7 +296,8 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
   ];
 
   return (
-    <Modal
+    <>
+      <Modal
       title={
         <Space>
           <span style={{ fontSize: 16, fontWeight: 600 }}>卡片详情</span>
@@ -567,6 +568,7 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
           )}
         </Spin>
       </Modal>
+    </>
   );
 };
 
