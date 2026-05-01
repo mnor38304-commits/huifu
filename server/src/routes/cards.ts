@@ -64,24 +64,32 @@ async function getChannelSDK(): Promise<ChannelSDK> {
   ).get() as any;
 
   if (geoChannel) {
-    if (!geoChannel.api_key) {
-      throw new Error('GEO 渠道 api_key 未配置');
+    let geoConfig: Record<string, any> = {};
+    try { geoConfig = JSON.parse(geoChannel.config_json || '{}'); } catch (_) {}
+
+    if (geoConfig.authMode === 'RSA_4_PARAMS') {
+      if (!geoConfig.userNo) {
+        throw new Error('GEO RSA 配置不完整：缺少 userNo');
+      }
+      if (!geoConfig.appPublicKey) {
+        throw new Error('GEO RSA 配置不完整：缺少 appPublicKey (GEO 平台公钥)');
+      }
     }
-    if (!geoChannel.api_secret) {
-      throw new Error('GEO 渠道 api_secret 未配置');
-    }
-    if (!geoChannel.api_base_url) {
+
+    const baseUrl = geoChannel.api_base_url || geoConfig.apiBaseUrl || geoConfig.baseUrl;
+    if (!baseUrl) {
       throw new Error('GEO 渠道 api_base_url 未配置');
     }
 
     try {
       const { GeoSdk } = await import('../channels/geo');
       const sdk = new GeoSdk({
-        apiKey: geoChannel.api_key,
-        apiSecret: geoChannel.api_secret,
-        baseUrl: geoChannel.api_base_url,
+        baseUrl: baseUrl,
+        userNo: geoConfig.userNo || '',
+        appPublicKey: geoConfig.appPublicKey || '',
+        authMode: geoConfig.authMode || 'RSA_4_PARAMS',
       });
-      console.log('[Channel] 使用 GEO 渠道');
+      console.log('[Channel] 使用 GEO 渠道 (RSA 4 参数模式)');
       return { type: 'geo', sdk, channel: geoChannel };
     } catch (err: any) {
       console.error('[Channel] GEO SDK 加载失败:', err.message);
