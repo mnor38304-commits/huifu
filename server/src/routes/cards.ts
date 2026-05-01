@@ -639,6 +639,10 @@ router.get('/:id/pan-token', authMiddleware, async (req: AuthRequest, res: Respo
     return res.json({ code: 400, message: '该渠道不支持 Secure iFrame', timestamp: Date.now() });
   }
 
+  // 🔒 安全头：禁止缓存 iframeUrl / token
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+
   try {
     const channel = await getChannelSDK();
     if (channel.type !== 'uqpay' || !channel.sdk) {

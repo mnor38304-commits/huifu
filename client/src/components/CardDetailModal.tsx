@@ -7,7 +7,7 @@ import {
   SearchOutlined, ReloadOutlined, EyeOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import VirtualCard from './VirtualCard';
-import { getCardEnhancedDetail, getCardTransactions, getCardOperations, revealCard } from '../services/api';
+import { getCardEnhancedDetail, getCardTransactions, getCardOperations, revealCard, getPanToken } from '../services/api';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -36,6 +36,12 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
   const [revealedCvv, setRevealedCvv] = useState<string | null>(null);
   const [revealLoading, setRevealLoading] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Secure iFrame state
+  const [secureIframeVisible, setSecureIframeVisible] = useState(false);
+  const [secureIframeUrl, setSecureIframeUrl] = useState<string | null>(null);
+  const [secureIframeLoading, setSecureIframeLoading] = useState(false);
+  const [secureIframeExpiresAt, setSecureIframeExpiresAt] = useState<string | null>(null);
 
   // Transaction state
   const [txnTabKey, setTxnTabKey] = useState('transactions');
@@ -137,6 +143,9 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
   // ── Cleanup on close ──
   const handleClose = () => {
     resetReveal();
+    setSecureIframeVisible(false);
+    setSecureIframeUrl(null);
+    setSecureIframeExpiresAt(null);
     setDetail(null);
     setTxns([]);
     setOps([]);
@@ -158,7 +167,22 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
       const res = await revealCard(cardId);
       if (res.code === 0 && res.data) {
         if (res.data.mode === 'secure_iframe') {
-          message.info(res.data.hint || '请使用 Secure iFrame 查看完整卡面');
+          // UQPay Secure iFrame 模式：自动请求 PAN Token 并打开 iFrame
+          setSecureIframeLoading(true);
+          try {
+            const tokenRes = await getPanToken(cardId);
+            if (tokenRes.code === 0 && tokenRes.data?.iframeUrl) {
+              setSecureIframeUrl(tokenRes.data.iframeUrl);
+              setSecureIframeExpiresAt(tokenRes.data.expiresAt || null);
+              setSecureIframeVisible(true);
+            } else {
+              message.error(tokenRes.message || '获取安全卡信息页面失败');
+            }
+          } catch (err: any) {
+            message.error(err?.response?.data?.message || '获取安全卡信息页面失败');
+          } finally {
+            setSecureIframeLoading(false);
+          }
           return;
         }
         setRevealedCardNo(res.data.cardNo || null);
@@ -499,6 +523,50 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
         )}
       </Spin>
     </Modal>
+
+      {/* ── UQPay Secure iFrame Modal ── */}
+      <Modal
+        title="安全查看卡信息"
+        open={secureIframeVisible}
+        onCancel={() => {
+          setSecureIframeVisible(false);
+          setSecureIframeUrl(null);
+          setSecureIframeExpiresAt(null);
+        }}
+        footer={null}
+        width={700}
+        destroyOnClose
+      >
+        <Spin spinning={secureIframeLoading}>
+          {secureIframeUrl && (
+            <>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="完整卡号、有效期和 CVV 在 UQPay Secure iFrame 中展示。出于安全合规要求，父页面不能读取或复制完整卡信息。如需复制，请在安全卡面页面内操作。"
+              />
+              {secureIframeExpiresAt && (
+                <p style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+                  Token 有效期至: {new Date(secureIframeExpiresAt).toLocaleString('zh-CN')}
+                </p>
+              )}
+              <iframe
+                src={secureIframeUrl}
+                title="Secure Card Information"
+                style={{
+                  width: '100%',
+                  height: 420,
+                  border: '1px solid #eee',
+                  borderRadius: 8,
+                }}
+                sandbox="allow-scripts allow-forms allow-same-origin"
+                referrerPolicy="no-referrer"
+              />
+            </>
+          )}
+        </Spin>
+      </Modal>
   );
 };
 
