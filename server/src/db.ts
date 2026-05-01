@@ -331,6 +331,30 @@ export async function initDatabase(): Promise<Database> {
     db.run('CREATE INDEX IF NOT EXISTS idx_uqpay_webhook_type ON uqpay_webhook_events(event_type)');
     db.run('CREATE INDEX IF NOT EXISTS idx_wallet_conversions_user_id ON wallet_conversions(user_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_wallet_conversions_key ON wallet_conversions(idempotency_key)');
+    // ── 持卡人表 ─────────────────────────────────────────────
+    db.run(`CREATE TABLE IF NOT EXISTS cardholders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_code TEXT NOT NULL DEFAULT 'DOGPAY',
+      external_id TEXT,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      country_code TEXT DEFAULT 'US',
+      id_type INTEGER DEFAULT 0,
+      id_number_masked TEXT,
+      id_number_hash TEXT,
+      status TEXT DEFAULT 'PENDING',
+      kyc_status TEXT DEFAULT 'PENDING',
+      raw_response_json TEXT,
+      error_message TEXT,
+      created_by_admin_id INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_cardholders_channel_email ON cardholders(channel_code, email)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_cardholders_external_id ON cardholders(external_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_cardholders_status ON cardholders(status)');
   } catch (e) {}
 
   saveDatabase();

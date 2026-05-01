@@ -13,6 +13,7 @@ import Merchants from './pages/Merchants'
 import KycAudit from './pages/KycAudit'
 import CardBins from './pages/CardBins'
 import CardList from './pages/CardList'
+import CardholderManagement from './pages/CardholderManagement'
 import Channels from './pages/Channels'
 import UsdtOrders from './pages/UsdtOrders'
 import UsdtChannel from './pages/UsdtChannel'
@@ -40,6 +41,7 @@ const menuItems = [
     children: [
       { key: '/card-bins', label: 'BIN费率设置' },
       { key: '/cards', label: '卡片列表' },
+      { key: '/cardholders', label: '持卡人管理', icon: <TeamOutlined /> },
       { key: '/channels', label: '渠道对接', icon: <ApiOutlined /> },
     ]
   },
@@ -162,6 +164,7 @@ export default function App() {
             <Route path="/kyc-audit" element={<KycAudit />} />
             <Route path="/card-bins" element={<CardBins />} />
             <Route path="/cards" element={<CardList />} />
+            <Route path="/cardholders" element={<CardholderManagement />} />
             <Route path="/channels" element={<Channels />} />
             <Route path="/usdt" element={<UsdtOrders />} />
             <Route path="/usdt-channel" element={<UsdtChannel />} />
