@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Card, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Upload, Alert, Row, Col, Statistic, Spin } from 'antd'
 import { PlusOutlined, DownloadOutlined, UploadOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
-import { getCardholders, createCardholder, batchValidateCardholders, batchCreateCardholders, downloadCardholderTemplate } from '../api'
+import { getCardholders, createCardholder, batchValidateCardholders, batchCreateCardholders, downloadCardholderTemplate, getCardholderChannelList } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 
 const CardholderManagement: React.FC = () => {
@@ -169,7 +169,7 @@ const CardholderManagement: React.FC = () => {
           <Button icon={<UploadOutlined />} onClick={() => { setBatchModal(true); setBatchResult(null); setValidateResult(null); setBatchRaw('') }}>
             批量导入
           </Button>
-          <Button icon={<DownloadOutlined />} onClick={() => window.open(downloadCardholderTemplate())}>
+          <Button icon={<DownloadOutlined />} onClick={() => window.open(downloadCardholderTemplate('DOGPAY'))}>
             下载模板
           </Button>
         </Space>
