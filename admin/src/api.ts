@@ -39,7 +39,7 @@ export const updateMerchantBinPermissions = (id, binIds) => BASE.post(`/merchant
 export const setMerchantStatus = (id, s) => BASE.post(`/merchants/${id}/status`, { status: s })
 export const getKycPending = p => BASE.get('/merchants/kyc/pending', { params: p })
 export const auditKyc = (id, a, r) => BASE.post(`/merchants/kyc/${id}/audit`, { action: a, rejectReason: r })
-export const getBins = p => BASE.get('/cards/bins', { params: p })
+export const getBins = (p: any) => BASE.get('/cards/bins', { params: { channelCode: 'ALL', ...p } })
 export const createBin = d => BASE.post('/cards/bins', d)
 export const updateBin = (id, d) => BASE.put(`/cards/bins/${id}`, d)
 export const bulkUpdateBinRates = (ids, rates) => BASE.post('/cards/bins/batch-rates', { ids, rates })

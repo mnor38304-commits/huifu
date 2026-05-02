@@ -29,13 +29,14 @@ export default function CardBins() {
   const [editRecord, setEditRecord] = useState<any>(null)
   const [form] = Form.useForm()
   const [batchForm] = Form.useForm()
+  const [channelFilter, setChannelFilter] = useState('ALL')
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [channelFilter])
 
   const load = async () => {
     setLoading(true)
     try {
-      const r: any = await getBins({ page: 1, pageSize: 50 })
+      const r: any = await getBins({ page: 1, pageSize: 50, channelCode: channelFilter })
       if (r.code === 0) { setList(r.data.list); setTotal(r.data.total) }
     } finally { setLoading(false) }
   }
@@ -95,6 +96,7 @@ export default function CardBins() {
   }
 
   const cols = [
+    { title: '发卡机构', dataIndex: 'channel_code', key: 'channel_code', width: 100, render: (v: string) => <Tag color={v==='UQPAY'?'blue':'green'}>{v}</Tag> },
     { title: 'BIN码', dataIndex: 'bin_code', key: 'bin_code', width: 100 },
     { title: 'BIN名称', dataIndex: 'bin_name', key: 'bin_name', width: 160 },
     { title: '品牌', dataIndex: 'card_brand', key: 'card_brand', width: 80, render: (v: string) => <Tag color={v==='VISA'?'blue':'orange'}>{v}</Tag> },
@@ -116,6 +118,11 @@ export default function CardBins() {
           <div>
             <span style={{ fontSize: 16, fontWeight: 600 }}>卡 BIN 费率管理</span>
             <span style={{ color: '#999', fontSize: 13, marginLeft: 8 }}>共 {total} 个BIN</span>
+            <Select value={channelFilter} onChange={v => setChannelFilter(v)} style={{ width: 120, marginLeft: 16 }} size="small">
+              <Option value="ALL">全部</Option>
+              <Option value="UQPAY">UQPAY</Option>
+              <Option value="GEO">GEO</Option>
+            </Select>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button onClick={openBatch} disabled={!selectedRowKeys.length}>批量费率设置</Button>
