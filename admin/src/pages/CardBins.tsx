@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Table, Button, Tag, Card, Modal, Form, Input, InputNumber, Select, message, Tooltip, Divider } from 'antd'
-import { PlusOutlined, EditOutlined, InfoCircleOutlined } from '@ant-design/icons'
-import { getBins, createBin, updateBin, bulkUpdateBinRates } from '../api'
+import { EditOutlined, InfoCircleOutlined } from '@ant-design/icons'
+import { getBins, updateBin, bulkUpdateBinRates } from '../api'
 
 const { Option } = Select
 
@@ -41,7 +41,6 @@ export default function CardBins() {
     } finally { setLoading(false) }
   }
 
-  const openCreate = () => { setEditRecord(null); form.resetFields(); setModalVisible(true) }
   const openEdit = (record: any) => {
     setEditRecord(record)
     form.setFieldsValue({
@@ -58,8 +57,8 @@ export default function CardBins() {
   const onSubmit = async (values: any) => {
     const data = { ...values, topupFeeRate: values.topupFeeRate/100, crossBorderFeeRate: values.crossBorderFeeRate/100, refundFeeRate: values.refundFeeRate/100 }
     try {
-      const r: any = editRecord ? await updateBin(editRecord.id, data) : await createBin(data)
-      if (r.code === 0) { message.success(editRecord ? '更新成功' : '创建成功'); setModalVisible(false); load() }
+      const r: any = await updateBin(editRecord.id, data)
+      if (r.code === 0) { message.success('更新成功'); setModalVisible(false); load() }
       else message.error(r.message)
     } catch (e: any) { message.error(e.response?.data?.message || '操作失败') }
   }
@@ -126,7 +125,6 @@ export default function CardBins() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button onClick={openBatch} disabled={!selectedRowKeys.length}>批量费率设置</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增BIN</Button>
           </div>
         </div>
         <Table rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }} columns={cols} dataSource={list} rowKey="id" loading={loading} scroll={{ x: 1200 }} pagination={false} />
