@@ -978,13 +978,13 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
     if (enableUqpayRealRecharge !== 'true') {
       return res.json({ code: 400, message: 'UQPay 真实充值暂未开放', timestamp: Date.now() });
     }
-    const whitelistStr = process.env.UQPAY_RECHARGE_TEST_USER_IDS || '';
-    const whitelist = whitelistStr.split(',').map(s => s.trim()).filter(Boolean).map(Number);
-    if (!whitelist.includes(userId)) {
+    const testUserIds = (process.env.UQPAY_RECHARGE_TEST_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    // 空列表 = 全量开放；非空时才检查白名单
+    if (testUserIds.length > 0 && !testUserIds.includes(String(userId))) {
       return res.json({ code: 403, message: 'UQPay 真实充值仅限测试用户', timestamp: Date.now() });
     }
     // 白名单用户跳过所有限额校验（单笔、日累计、并发、失败冻结）
-    const skipLimits = whitelist.includes(userId);
+    const skipLimits = testUserIds.length > 0 && testUserIds.includes(String(userId));
     // -----------------------------------------------------------------
     try {
       // 3a. 校验
