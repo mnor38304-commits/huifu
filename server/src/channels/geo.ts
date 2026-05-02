@@ -60,7 +60,7 @@ export interface GeoCard {
 
 export interface GeoCardholderCreateParams {
   userReqNo: string;
-  cardUserId: string;     // 持卡人标识（用于开卡的 cardUserId）
+  cardUserId: string;     // 系统生成的持卡人标识: GEOU{userId}{timestamp}
   userPhoneNumber: string;
   userEmail: string;
   userFirstName: string;
@@ -68,9 +68,18 @@ export interface GeoCardholderCreateParams {
 }
 
 export interface GeoCardholder {
-  cardUserId: string;
+  cardUserId: string;     // GEO 返回确认的持卡人 ID
   status: string;
   rawJson: any;
+}
+
+/**
+ * 生成 GEO 持卡人标识
+ * 格式: GEOU + userId + 短时间戳（年月日时分）
+ */
+export function generateGeoCardUserId(userId: number): string {
+  const ts = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 12);
+  return `GEOU${userId}${ts}`;
 }
 
 // ─── SDK ──────────────────────────────────────────────────────────────────────

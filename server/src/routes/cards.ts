@@ -401,7 +401,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     const reqLimit = Number(creditLimit);
     const userId = req.user!.userId;
 
-    // ════ 16 项顺序校验 ════
+    // ════ 17 项顺序校验 ════
 
     // 1. readonly
     if (isReadonly) {
@@ -476,15 +476,23 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     geoCreateLocks.set(userId, true);
 
     // ── 获取 GEO cardUserId ──
-    // 从 config_json.geoCardUserIds 映射表读取（key=本地userId, value=GEO cardUserId）
-    // 不使用 users.user_no，避免混淆
+    // 从 config_json.geoCardUserIds 映射表读取
     const geoCardUserIdMap = geoConfig.geoCardUserIds || {};
     const geoCardUserId = geoCardUserIdMap[String(userId)] || '';
 
     // cardUserId 为空则直接拒绝，不调用 GEO API
     if (!geoCardUserId || !String(geoCardUserId).trim()) {
       geoCreateLocks.delete(userId);
-      return res.json({ code: 400, message: 'GEO cardUserId 未配置，请先在渠道配置中设置 geoCardUserIds', timestamp: Date.now() });
+      return res.json({ code: 400, message: 'GEO 持卡人未创建，请先创建 GEO 持卡人', timestamp: Date.now() });
+    }
+
+    // 17. 一个 cardUserId 最多 5 张卡
+    const geoCardCount = db.prepare(
+      "SELECT COUNT(*) as c FROM cards WHERE user_id=? AND channel_code='GEO' AND status IN (0,1,2)"
+    ).get(userId) as any;
+    if (geoCardCount && geoCardCount.c >= 5) {
+      geoCreateLocks.delete(userId);
+      return res.json({ code: 429, message: '每个 GEO 持卡人最多开通 5 张卡（当前已满）', timestamp: Date.now() });
     }
 
     try {
