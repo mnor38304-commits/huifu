@@ -60,11 +60,19 @@ export interface GeoCard {
 
 export interface GeoCardholderCreateParams {
   userReqNo: string;
-  cardUserId: string;     // 系统生成的持卡人标识: GEOU{userId}{timestamp}
-  userPhoneNumber: string;
-  userEmail: string;
-  userFirstName: string;
-  userLastName: string;
+  cardUserId: string;     // GEO 持卡人标识: GEOU{userId}{timestamp}
+  mobile: string;          // 手机号
+  mobilePrefix: string;    // 手机号国际区号，如 +86
+  email: string;
+  firstName: string;
+  lastName: string;
+  birthDate: string;       // yyyy-MM-dd
+  billingCity: string;
+  billingState: string;
+  billingCountry: string;
+  billingAddress: string;
+  billingZipCode: string;
+  countryCode: string;     // 2 字母国家代码，如 SG/US
 }
 
 export interface GeoCardholder {
@@ -314,10 +322,18 @@ export class GeoSdk {
     const body: Record<string, unknown> = {
       userReqNo: params.userReqNo,
       cardUserId: params.cardUserId,
-      userPhoneNumber: params.userPhoneNumber,
-      userEmail: params.userEmail,
-      userFirstName: params.userFirstName,
-      userLastName: params.userLastName,
+      mobile: params.mobile,
+      mobilePrefix: params.mobilePrefix,
+      email: params.email,
+      firstName: params.firstName,
+      lastName: params.lastName,
+      birthDate: params.birthDate,
+      billingCity: params.billingCity,
+      billingState: params.billingState,
+      billingCountry: params.billingCountry,
+      billingAddress: params.billingAddress,
+      billingZipCode: params.billingZipCode,
+      countryCode: params.countryCode,
     };
 
     const data: any = await this.request('POST', '/openapi/vcc/cardholder/apply', body);
