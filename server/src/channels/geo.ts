@@ -75,11 +75,14 @@ export interface GeoCardholder {
 
 /**
  * 生成 GEO 持卡人标识
- * 格式: GEOU + userId + 短时间戳（年月日时分）
+ * 格式: GEOU + userId + 时间戳（yyyyMMddHHmmss）+ 4 位随机数
+ * 示例: GEOU9202605021514001234
+ * 长度约 27 字符
  */
 export function generateGeoCardUserId(userId: number): string {
-  const ts = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 12);
-  return `GEOU${userId}${ts}`;
+  const ts = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+  const rand = String(Math.floor(1000 + Math.random() * 9000));
+  return `GEOU${userId}${ts}${rand}`;
 }
 
 // ─── SDK ──────────────────────────────────────────────────────────────────────
