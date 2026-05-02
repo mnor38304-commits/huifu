@@ -55,7 +55,7 @@ export const resetPassword = (account: string, code: string, newPassword: string
   api.post('/auth/reset-password', { account, code, newPassword })
 
 // ── Cards ────────────────────────────────────────────────────────────────────
-export const getCards = (status?: number) => api.get('/cards', { params: { status } })
+export const getCards = (params?: any) => api.get('/cards', { params })
 export const getAvailableCardBins = () => api.get('/cards/bins/available')
 export const createCard = (data: any) => api.post('/cards', data)
 export const getCardDetail = (id: number) => api.get(`/cards/${id}`)

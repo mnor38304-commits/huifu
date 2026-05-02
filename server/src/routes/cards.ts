@@ -192,7 +192,7 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
 
 router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   freezeExpiredCardsForUser(req.user!.userId);
-  const { status } = req.query;
+  const { cardNo, failedCount, remark, status, createdStart, createdEnd } = req.query;
 
   let sql = `SELECT c.id, c.card_no_masked, c.card_name, c.card_type, c.currency, c.balance,
     c.credit_limit, c.single_limit, c.daily_limit, c.status, c.expire_date, c.purpose,
@@ -208,9 +208,34 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
     WHERE c.user_id = ?`;
   const params: any[] = [req.user!.userId];
 
-  if (status) {
+  if (cardNo) {
+    sql += ' AND c.card_no_masked LIKE ?';
+    params.push(`%${cardNo}%`);
+  }
+  if (failedCount !== undefined && failedCount !== '') {
+    const fc = Number(failedCount);
+    if (!isNaN(fc)) {
+      sql += ` AND COALESCE(f.failed_count, 0) >= ?`;
+      params.push(fc);
+    }
+  }
+  if (remark) {
+    sql += ' AND c.remark LIKE ?';
+    params.push(`%${remark}%`);
+  }
+  if (status === 'expired_frozen') {
+    sql += " AND c.status = 2 AND c.auto_frozen_reason = 'USAGE_EXPIRED'";
+  } else if (status) {
     sql += ' AND c.status = ?';
     params.push(Number(status));
+  }
+  if (createdStart) {
+    sql += ' AND c.created_at >= ?';
+    params.push(createdStart);
+  }
+  if (createdEnd) {
+    sql += ' AND c.created_at <= ?';
+    params.push(createdEnd + ' 23:59:59');
   }
 
   sql += ' ORDER BY c.created_at DESC';

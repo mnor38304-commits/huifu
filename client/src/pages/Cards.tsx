@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip, Radio } from 'antd'
+import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip, Radio, DatePicker } from 'antd'
 import {
   PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined,
-  DeleteOutlined, WalletOutlined, TransactionOutlined, EditOutlined, ClockCircleOutlined
+  DeleteOutlined, WalletOutlined, TransactionOutlined, EditOutlined, ClockCircleOutlined, SearchOutlined, ReloadOutlined
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -23,6 +23,14 @@ const Cards: React.FC = () => {
   const [creating, setCreating] = useState(false)
   const [form] = Form.useForm()
 
+  // Filter state
+  const [filterCardNo, setFilterCardNo] = useState('')
+  const [filterFailedCount, setFilterFailedCount] = useState('')
+  const [filterRemark, setFilterRemark] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [filterCreatedStart, setFilterCreatedStart] = useState('')
+  const [filterCreatedEnd, setFilterCreatedEnd] = useState('')
+
   // Card detail modal state
   const [detailModalCardId, setDetailModalCardId] = useState<number | null>(null)
   const [detailModalVisible, setDetailModalVisible] = useState(false)
@@ -33,7 +41,14 @@ const Cards: React.FC = () => {
 
   const loadCards = async () => {
     try {
-      const res = await getCards()
+      const params: any = {}
+      if (filterCardNo) params.cardNo = filterCardNo
+      if (filterFailedCount) params.failedCount = filterFailedCount
+      if (filterRemark) params.remark = filterRemark
+      if (filterStatus) params.status = filterStatus
+      if (filterCreatedStart) params.createdStart = filterCreatedStart
+      if (filterCreatedEnd) params.createdEnd = filterCreatedEnd
+      const res = await getCards(params)
       if (res.code === 0) {
         setCards(res.data || [])
       }
@@ -423,6 +438,38 @@ const Cards: React.FC = () => {
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
           开卡
         </Button>
+      </div>
+
+      {/* ── 查询筛选栏 ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Input placeholder="请输入卡号" value={filterCardNo} onChange={e => setFilterCardNo(e.target.value)} style={{ width: 140 }} allowClear />
+        <Input placeholder="请输入失败次数" value={filterFailedCount} onChange={e => setFilterFailedCount(e.target.value)} style={{ width: 140 }} allowClear />
+        <Input placeholder="请输入卡备注" value={filterRemark} onChange={e => setFilterRemark(e.target.value)} style={{ width: 140 }} allowClear />
+        <Select value={filterStatus || undefined} onChange={v => setFilterStatus(v || '')} placeholder="请选择使用状态" style={{ width: 140 }} allowClear>
+          <Option value="">全部</Option>
+          <Option value="1">正常</Option>
+          <Option value="2">冻结</Option>
+          <Option value="3">已到期</Option>
+          <Option value="4">已注销</Option>
+          <Option value="expired_frozen">已到期冻结</Option>
+        </Select>
+        <DatePicker
+          placeholder="开始日期"
+          value={filterCreatedStart ? (filterCreatedStart as any) : undefined}
+          onChange={(_, ds) => setFilterCreatedStart(ds || '')}
+          style={{ width: 130 }}
+        />
+        <DatePicker
+          placeholder="结束日期"
+          value={filterCreatedEnd ? (filterCreatedEnd as any) : undefined}
+          onChange={(_, ds) => setFilterCreatedEnd(ds || '')}
+          style={{ width: 130 }}
+        />
+        <Button type="primary" icon={<SearchOutlined />} onClick={() => { setLoading(true); loadCards() }}>搜索</Button>
+        <Button icon={<ReloadOutlined />} onClick={() => {
+          setFilterCardNo(''); setFilterFailedCount(''); setFilterRemark(''); setFilterStatus(''); setFilterCreatedStart(''); setFilterCreatedEnd('')
+          setLoading(true); loadCards()
+        }}>重置</Button>
       </div>
 
       <Table
