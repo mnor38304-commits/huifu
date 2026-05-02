@@ -476,15 +476,15 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     geoCreateLocks.set(userId, true);
 
     // ── 获取 GEO cardUserId ──
-    // 优先级：users.user_no（当前系统无独立 GEO 持卡人表，临时使用 user_no）
-    // 后续接入 cardholders 独立字段后应改用 provider_user_id
-    const geoUser = db.prepare('SELECT user_no FROM users WHERE id = ?').get(userId) as any;
-    const geoCardUserId = geoUser?.user_no || '';
+    // 从 config_json.geoCardUserIds 映射表读取（key=本地userId, value=GEO cardUserId）
+    // 不使用 users.user_no，避免混淆
+    const geoCardUserIdMap = geoConfig.geoCardUserIds || {};
+    const geoCardUserId = geoCardUserIdMap[String(userId)] || '';
 
     // cardUserId 为空则直接拒绝，不调用 GEO API
     if (!geoCardUserId || !String(geoCardUserId).trim()) {
       geoCreateLocks.delete(userId);
-      return res.json({ code: 400, message: 'GEO cardUserId 未配置，请先为该用户配置 GEO 持卡人 ID', timestamp: Date.now() });
+      return res.json({ code: 400, message: 'GEO cardUserId 未配置，请先在渠道配置中设置 geoCardUserIds', timestamp: Date.now() });
     }
 
     try {
