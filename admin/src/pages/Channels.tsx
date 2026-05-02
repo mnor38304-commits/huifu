@@ -56,7 +56,13 @@ export default function Channels() {
         r = await syncDogPayBins()
       }
       if (r.code === 0) {
-        message.success(`[${ch.channel_name}] BIN 同步成功！新增: ${r.data?.synced || 0} 个`)
+        const total = (r.data?.inserted || 0) + (r.data?.updated || 0)
+        const parts: string[] = []
+        if (r.data?.inserted) parts.push(`新增 ${r.data.inserted}`)
+        if (r.data?.updated) parts.push(`更新 ${r.data.updated}`)
+        if (r.data?.skippedShare) parts.push(`跳过 SHARE ${r.data.skippedShare}`)
+        if (r.data?.skippedUnknown) parts.push(`跳过未知 ${r.data.skippedUnknown}`)
+        message.success(`[${ch.channel_name}] BIN 同步完成：共 ${r.data?.total || 0} 个产品，${parts.join('，')}`)
       } else {
         message.error(r.message || '同步失败')
       }
