@@ -4,7 +4,7 @@
  *
  * Base URL:
  *   Sandbox: https://api-sandbox.uqpaytech.com
- *   Production: https://api.uqpaytech.com
+ *   Production: https://api.uqpay.com
  *
  * 认证方式:
  *   1. POST /api/v1/connect/token → 获取 auth_token (x-auth-token header)
