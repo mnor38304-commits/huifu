@@ -296,9 +296,47 @@ const Cards: React.FC = () => {
       )
     },
     {
-      title: '卡片名称',
-      dataIndex: 'card_name',
-      key: 'card_name',
+      title: 'CVV',
+      dataIndex: 'cvv',
+      key: 'cvv',
+      width: 60,
+      render: () => <span style={{ fontFamily: "'Courier New', monospace", letterSpacing: 2, color: '#999' }}>***</span>,
+    },
+    {
+      title: '卡面有效期',
+      dataIndex: 'expire_date',
+      key: 'expire_date',
+    },
+    {
+      title: '余额',
+      dataIndex: 'balance',
+      key: 'balance',
+      render: (val: number) => `$${val?.toFixed(2) || '0.00'}`,
+    },
+    {
+      title: '失败次数',
+      dataIndex: 'failed_count',
+      key: 'failed_count',
+      width: 80,
+      render: (v: number) => <span style={{ color: v > 0 ? '#ff4d4f' : '#999' }}>{v || 0}</span>,
+    },
+    {
+      title: '开卡时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (val: string) => val ? new Date(val).toLocaleString('zh-CN') : '-',
+    },
+    {
+      title: '使用有效期',
+      dataIndex: 'usage_expires_at',
+      key: 'usage_expires_at',
+      render: (_: any, record: any) => getUsageExpiryText(record),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: number, record: any) => getStatusTag(status, record),
     },
     {
       title: '备注',
@@ -312,49 +350,6 @@ const Cards: React.FC = () => {
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openRemarkModal(record)} />
         </Space>
       ),
-    },
-    {
-      title: '余额',
-      dataIndex: 'balance',
-      key: 'balance',
-      render: (val: number) => `$${val?.toFixed(2) || '0.00'}`,
-    },
-    {
-      title: 'CVV',
-      dataIndex: 'cvv',
-      key: 'cvv',
-      width: 60,
-      render: () => <span style={{ fontFamily: "'Courier New', monospace", letterSpacing: 2, color: '#999' }}>***</span>,
-    },
-    {
-      title: '卡面有效期',
-      dataIndex: 'expire_date',
-      key: 'expire_date',
-    },
-    {
-      title: '失败次数',
-      dataIndex: 'failed_count',
-      key: 'failed_count',
-      width: 80,
-      render: (v: number) => <span style={{ color: v > 0 ? '#ff4d4f' : '#999' }}>{v || 0}</span>,
-    },
-    {
-      title: '使用到期时间',
-      dataIndex: 'usage_expires_at',
-      key: 'usage_expires_at',
-      render: (_: any, record: any) => getUsageExpiryText(record),
-    },
-    {
-      title: '开卡时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (val: string) => val ? new Date(val).toLocaleString('zh-CN') : '-',
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status: number, record: any) => getStatusTag(status, record),
     },
     {
       title: '操作',
