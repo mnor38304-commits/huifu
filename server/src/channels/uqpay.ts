@@ -567,7 +567,7 @@ export class UqPaySDK {
   async listCardProducts(): Promise<UqPayCardProduct[]> {
     const res = await this.request<{ data: any[] }>(
       'GET',
-      '/api/v1/issuing/products?page_size=10000&page_number=1'
+      '/api/v1/issuing/products?page_size=100&page_number=1'
     );
     const raw = res.data || [];
     return raw.map(normalizeCardProduct);
