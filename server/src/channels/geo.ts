@@ -58,6 +58,21 @@ export interface GeoCard {
   rawJson: any;
 }
 
+export interface GeoCardholderCreateParams {
+  userReqNo: string;
+  cardUserId: string;     // 持卡人标识（用于开卡的 cardUserId）
+  userPhoneNumber: string;
+  userEmail: string;
+  userFirstName: string;
+  userLastName: string;
+}
+
+export interface GeoCardholder {
+  cardUserId: string;
+  status: string;
+  rawJson: any;
+}
+
 // ─── SDK ──────────────────────────────────────────────────────────────────────
 
 const CHUNK_SIZE = 117;   // RSA 1024 PKCS#1 单块最大明文
@@ -273,6 +288,31 @@ export class GeoSdk {
       cardVerifyNo: data.cardVerifyNo || '',
       cardExpiryDate: data.cardExpiryDate || '',
       status: status,
+      rawJson: this.sanitizeLog(data),
+    };
+  }
+
+  // ── 持卡人申请 ─────────────────────────────────────────────────────────
+
+  /**
+   * 申请注册 GEO 持卡人
+   * 返回的 cardUserId 是后续开卡时必须使用的字段
+   */
+  async createCardholder(params: GeoCardholderCreateParams): Promise<GeoCardholder> {
+    const body: Record<string, unknown> = {
+      userReqNo: params.userReqNo,
+      cardUserId: params.cardUserId,
+      userPhoneNumber: params.userPhoneNumber,
+      userEmail: params.userEmail,
+      userFirstName: params.userFirstName,
+      userLastName: params.userLastName,
+    };
+
+    const data: any = await this.request('POST', '/openapi/vcc/cardholder/apply', body);
+
+    return {
+      cardUserId: data.cardUserId || params.cardUserId,
+      status: data.status || '1',
       rawJson: this.sanitizeLog(data),
     };
   }
