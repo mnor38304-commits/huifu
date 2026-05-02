@@ -408,6 +408,11 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                       {displayCvv}
                     </span>
                   </Descriptions.Item>
+                  <Descriptions.Item label="失败订单数">
+                    <span style={{ color: (detail.failedTxnCount || 0) > 0 ? '#ff4d4f' : '#999' }}>
+                      {detail.failedTxnCount || 0}
+                    </span>
+                  </Descriptions.Item>
                   <Descriptions.Item label="发卡地">{detail.issueCountry}</Descriptions.Item>
                   <Descriptions.Item label="账单地址" span={3}>{detail.billingAddress || '—'}</Descriptions.Item>
                 </Descriptions>

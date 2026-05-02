@@ -320,9 +320,23 @@ const Cards: React.FC = () => {
       render: (val: number) => `$${val?.toFixed(2) || '0.00'}`,
     },
     {
+      title: 'CVV',
+      dataIndex: 'cvv',
+      key: 'cvv',
+      width: 60,
+      render: () => <span style={{ fontFamily: "'Courier New', monospace", letterSpacing: 2, color: '#999' }}>***</span>,
+    },
+    {
       title: '卡面有效期',
       dataIndex: 'expire_date',
       key: 'expire_date',
+    },
+    {
+      title: '失败次数',
+      dataIndex: 'failed_count',
+      key: 'failed_count',
+      width: 80,
+      render: (v: number) => <span style={{ color: v > 0 ? '#ff4d4f' : '#999' }}>{v || 0}</span>,
     },
     {
       title: '使用到期时间',

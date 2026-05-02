@@ -194,21 +194,29 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
   freezeExpiredCardsForUser(req.user!.userId);
   const { status } = req.query;
 
-  let sql = `SELECT id, card_no_masked, card_name, card_type, currency, balance,
-    credit_limit, single_limit, daily_limit, status, expire_date, purpose,
-    created_at, bin_id, channel_code, remark,
-    usage_expires_at, auto_frozen_at, auto_frozen_reason
-    FROM cards WHERE user_id = ?`;
+  let sql = `SELECT c.id, c.card_no_masked, c.card_name, c.card_type, c.currency, c.balance,
+    c.credit_limit, c.single_limit, c.daily_limit, c.status, c.expire_date, c.purpose,
+    c.created_at, c.bin_id, c.channel_code, c.remark,
+    c.usage_expires_at, c.auto_frozen_at, c.auto_frozen_reason,
+    COALESCE(f.failed_count, 0) as failed_count
+    FROM cards c
+    LEFT JOIN (
+      SELECT card_id, COUNT(*) as failed_count
+      FROM transactions WHERE status IN (2, 3)
+      GROUP BY card_id
+    ) f ON c.id = f.card_id
+    WHERE c.user_id = ?`;
   const params: any[] = [req.user!.userId];
 
   if (status) {
-    sql += ' AND status = ?';
+    sql += ' AND c.status = ?';
     params.push(Number(status));
   }
 
-  sql += ' ORDER BY created_at DESC';
+  sql += ' ORDER BY c.created_at DESC';
 
-  const cards = db.prepare(sql).all(...params);
+  const rows = db.prepare(sql).all(...params);
+  const cards = rows.map((r: any) => ({ ...r, cvv: '***' }));
 
   res.json({ code: 0, message: 'success', data: cards, timestamp: Date.now() });
 });
@@ -673,6 +681,13 @@ router.get('/:id/detail', authMiddleware, (req: AuthRequest, res: Response<ApiRe
   `).get(req.params.id, req.user!.userId) as any;
   const totalTopup = topupRow?.total || 0;
 
+  // 失败交易统计
+  const failedRow = db.prepare(`
+    SELECT COUNT(*) as cnt FROM transactions
+    WHERE card_id = ? AND user_id = ? AND status IN (2, 3)
+  `).get(req.params.id, req.user!.userId) as any;
+  const failedTxnCount = failedRow?.cnt || 0;
+
   const statusMap: Record<number, string> = {
     0: '待激活', 1: '可用', 2: '冻结', 3: '已过期', 4: '已注销',
   };
@@ -696,6 +711,7 @@ router.get('/:id/detail', authMiddleware, (req: AuthRequest, res: Response<ApiRe
       balance: card.balance || 0,
       totalSpendAmount: totalSpend,
       totalTopupAmount: totalTopup,
+      failedTxnCount,
       currency: card.currency || 'USD',
       createdAt: issuedAt,
       issueCountry: card.bin_country || 'US',
