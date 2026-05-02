@@ -69,9 +69,10 @@ export interface GeoCardholderCreateParams {
   birthDate: string;       // yyyy-MM-dd
   billingCity: string;
   billingState: string;
+  billingCountry: string;  // GEO 国家名称，如 USA
   billingAddress: string;
   billingZipCode: string;
-  countryCode: string;     // 国家代码，中国传 CNH
+  countryCode: string;     // 同上，如 USA
 }
 
 export interface GeoCardholder {
@@ -329,6 +330,7 @@ export class GeoSdk {
       birthDate: params.birthDate,
       billingCity: params.billingCity,
       billingState: params.billingState,
+      billingCountry: params.billingCountry,
       billingAddress: params.billingAddress,
       billingZipCode: params.billingZipCode,
       countryCode: params.countryCode,
