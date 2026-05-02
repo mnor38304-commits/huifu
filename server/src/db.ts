@@ -370,6 +370,10 @@ export async function initDatabase(): Promise<Database> {
     try { db.run("ALTER TABLE cards ADD COLUMN usage_expires_at TEXT"); } catch (_) {}
     try { db.run("ALTER TABLE cards ADD COLUMN auto_frozen_at TEXT"); } catch (_) {}
     try { db.run("ALTER TABLE cards ADD COLUMN auto_frozen_reason TEXT"); } catch (_) {}
+    // card_bins 扩展字段（幂等迁移）
+    try { db.run("ALTER TABLE card_bins ADD COLUMN channel_code TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE card_bins ADD COLUMN external_bin_id TEXT"); } catch (_) {}
+    try { db.run("ALTER TABLE card_bins ADD COLUMN mode_type TEXT"); } catch (_) {}
   } catch (e) {}
 
   saveDatabase();

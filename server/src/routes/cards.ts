@@ -23,14 +23,14 @@ const router = Router();
 // ── 渠道 SDK 工厂 ────────────────────────────────────────────────────────────
 
 interface ChannelSDK {
-  type: 'uqpay' | 'dogpay' | 'mock';
-  sdk?: UqPaySDK | any; // UqPaySDK 用于类型安全的 UQPay 渠道；DogPaySDK 为动态 import，用 any 松散关联
+  type: 'uqpay' | 'geo' | 'dogpay' | 'mock';
+  sdk?: UqPaySDK | any;
   channel?: any;
 }
 
 /**
  * 获取当前启用的发卡渠道 SDK
- * 优先级: UQPay → DogPay → Mock
+ * 优先级: UQPay → GEO → DogPay → Mock
  */
 async function getChannelSDK(): Promise<ChannelSDK> {
   // 1. UQPay 渠道
@@ -39,7 +39,6 @@ async function getChannelSDK(): Promise<ChannelSDK> {
   ).get() as any;
 
   if (uqpayChannel) {
-    // config_json 中可配置 clientId/apiKey，也可从 api_key/api_secret 字段读取
     let config: Record<string, string> = {};
     try {
       config = JSON.parse(uqpayChannel.config_json || '{}');
@@ -51,7 +50,6 @@ async function getChannelSDK(): Promise<ChannelSDK> {
       baseUrl: uqpayChannel.api_base_url || undefined,
     });
 
-    // 如果 config_json 中有充值地址配置，注入到 SDK
     if (config.depositAddresses) {
       (sdk as any)._platformDepositAddresses = config.depositAddresses;
     }
@@ -60,7 +58,48 @@ async function getChannelSDK(): Promise<ChannelSDK> {
     return { type: 'uqpay', sdk, channel: uqpayChannel };
   }
 
-  // 2. DogPay 渠道（兼容旧接口）
+  // 2. GEO 渠道（InfiniaX）
+  const geoChannel = db.prepare(
+    "SELECT * FROM card_channels WHERE UPPER(channel_code) = 'GEO' AND status = 1"
+  ).get() as any;
+
+  if (geoChannel) {
+    let geoConfig: Record<string, any> = {};
+    try { geoConfig = JSON.parse(geoChannel.config_json || '{}'); } catch (_) {}
+
+    if (!geoConfig.userNo) {
+      throw new Error('GEO RSA 配置不完整：缺少 userNo');
+    }
+    if (!geoConfig.privateKey) {
+      throw new Error('GEO RSA 配置不完整：缺少 privateKey');
+    }
+    const geoPublicKey = geoConfig.geoPublicKey || geoConfig.publicKey;
+    if (!geoPublicKey) {
+      throw new Error('GEO RSA 配置不完整：缺少 geoPublicKey');
+    }
+
+    const baseUrl = geoChannel.api_base_url || geoConfig.apiBaseUrl;
+    if (!baseUrl) {
+      throw new Error('GEO 渠道 api_base_url 未配置');
+    }
+
+    try {
+      const { GeoSdk } = await import('../channels/geo');
+      const sdk = new GeoSdk({
+        baseUrl,
+        userNo: geoConfig.userNo,
+        privateKey: geoConfig.privateKey,
+        geoPublicKey,
+        customerPublicKey: geoConfig.customerPublicKey || '',
+      });
+      console.log('[Channel] 使用 GEO 渠道 (RSA 4 参数, privateEncrypt + geoPublicKey decrypt)');
+      return { type: 'geo', sdk, channel: geoChannel };
+    } catch (err: any) {
+      console.error('[Channel] GEO SDK 加载失败:', err.message);
+    }
+  }
+
+  // 3. DogPay 渠道（兼容旧接口）
   const dogpayChannel = db.prepare(
     "SELECT * FROM card_channels WHERE LOWER(channel_code) = 'dogpay' AND status = 1"
   ).get() as any;
@@ -199,7 +238,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
   if (channel.type !== 'mock') {
     allowedBins = allowedBins.filter((bin: any) => !!bin.external_bin_id);
-    channelCode = channel.type === 'uqpay' ? 'UQPAY' : 'DOGPAY';
+    channelCode = channel.type === 'uqpay' ? 'UQPAY' : channel.type === 'geo' ? 'GEO' : 'DOGPAY';
   }
 
   const selectedBin = binId
@@ -340,6 +379,65 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     } catch (err: any) {
       console.error('DogPay create card error:', err.message);
       return res.json({ code: 500, message: '渠道接口调用异常', timestamp: Date.now() });
+    }
+
+  } else if (channel.type === 'geo' && (channel.sdk as any)?.createCard) {
+    // GEO 开卡
+    let geoConfig: Record<string, any> = {};
+    try { geoConfig = JSON.parse(channel.channel?.config_json || '{}'); } catch (_) {}
+
+    if (geoConfig.enableCreateCard !== true) {
+      return res.json({
+        code: 503,
+        message: 'GEO 开卡未启用，请先在渠道配置中开启 enableCreateCard',
+        timestamp: Date.now()
+      });
+    }
+    if (!selectedBin.external_bin_id) {
+      return res.json({
+        code: 400,
+        message: '所选 BIN 无 external_bin_id，请先同步 GEO BIN',
+        timestamp: Date.now()
+      });
+    }
+
+    try {
+      const sdk = channel.sdk as any;
+      // Verify this is a SINGLE BIN
+      if (selectedBin.mode_type && selectedBin.mode_type !== 'SINGLE') {
+        return res.json({
+          code: 400,
+          message: 'GEO 仅支持开通 SINGLE 独立额度卡',
+          timestamp: Date.now()
+        });
+      }
+      const geoCard = await sdk.createCard({
+        userId: req.user!.userId,
+        cardName,
+        cardLimit: Number(creditLimit),
+        currency: geoConfig.defaultCurrency || 'USD',
+        binRangeId: selectedBin.external_bin_id,
+        validityYears: geoConfig.defaultCardValidityYears || 2,
+      });
+
+      externalId = geoCard.cardId || '';
+      // GEO 返回完整 cardNo，只取 last4 做脱敏，不保存完整卡号
+      const geoLast4 = geoCard.cardNo ? geoCard.cardNo.slice(-4) : '';
+      masked = geoLast4 ? `****${geoLast4}` : `****${externalId.slice(-4)}`;
+      cardNo = '';
+      cvv = '[查看卡号 → GEO 安全页面]';
+      expireDate = geoCard.cardExpiryDate
+        ? geoCard.cardExpiryDate.slice(0, 7)
+        : generateExpireDate();
+      effectiveInitialBalance = 0;
+      console.log('[GEO] 开卡成功:', externalId, masked, 'expire:', expireDate);
+    } catch (err: any) {
+      console.error('[GEO] 开卡失败:', err.message);
+      return res.json({
+        code: 500,
+        message: 'GEO 开卡失败: ' + err.message,
+        timestamp: Date.now()
+      });
     }
 
   } else {
