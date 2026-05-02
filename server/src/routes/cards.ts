@@ -492,7 +492,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       const geoLast4 = geoCard.cardNo ? geoCard.cardNo.slice(-4) : '';
       masked = geoLast4 ? `****${geoLast4}` : `****${externalId.slice(-4)}`;
       cardNo = '';             // 完整 cardNo 不落库
-      cvv = '[安全页面]';       // cardVerifyNo/CVV 不落库
+      cvv = '';             // cardVerifyNo/CVV 不落库
       expireDate = geoCard.cardExpiryDate
         ? geoCard.cardExpiryDate.slice(0, 7)
         : generateExpireDate();
