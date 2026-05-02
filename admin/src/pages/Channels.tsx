@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Table, Button, Tag, Space, Card, Modal, Form, Input, Select, message, Popconfirm } from 'antd'
-import { PlusOutlined, EditOutlined, ApiOutlined, SyncOutlined } from '@ant-design/icons'
-import { getChannels, createChannel, updateChannel, syncDogPayBins } from '../api'
+import { PlusOutlined, EditOutlined, ApiOutlined, SyncOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import { getChannels, createChannel, updateChannel, syncDogPayBins, syncGeoBins } from '../api'
 
 const { Option } = Select
 
@@ -42,11 +42,17 @@ export default function Channels() {
     } catch (e: any) { message.error(e.response?.data?.message || '操作失败') }
   }
 
-  // 同步指定渠道的 BIN（目前后端只支持 DogPay，后续可扩展）
+  // 同步指定渠道的 BIN（按渠道代码分发）
   const handleSyncBins = async (ch: any) => {
     setSyncingId(ch.id)
     try {
-      const r: any = await syncDogPayBins()
+      const code = (ch.channel_code || '').toUpperCase()
+      let r: any
+      if (code === 'GEO') {
+        r = await syncGeoBins()
+      } else {
+        r = await syncDogPayBins()
+      }
       if (r.code === 0) {
         message.success(`[${ch.channel_name}] BIN 同步成功！新增: ${r.data?.synced || 0} 个`)
       } else {
@@ -60,7 +66,30 @@ export default function Channels() {
   }
 
   const channelLogos: Record<string, string> = {
-    AIRWALLEX: '🌐', PHOTON: '⚡', DOGPAY: '🐕', CUSTOM: '🔧'
+    AIRWALLEX: '🌐', PHOTON: '⚡', DOGPAY: '🐕', GEO: '🌍', CUSTOM: '🔧'
+  }
+
+  // 解析渠道 config_json 中的 GEO 灰度配置（脱敏安全，不暴露密钥）
+  const getGeoCanaryTags = (ch: any): React.ReactNode[] => {
+    if ((ch.channel_code || '').toUpperCase() !== 'GEO') return []
+    let cfg: any = {}
+    try { cfg = JSON.parse(ch.config_json || '{}') } catch (_) {}
+    const tags: React.ReactNode[] = []
+    if (cfg.readonly === true) tags.push(<Tag key="ro" color="orange">只读</Tag>)
+    else if (cfg.readonly === false) tags.push(<Tag key="ro" color="green">可写</Tag>)
+    tags.push(cfg.enableCreateCard === true
+      ? <Tag key="ecc" color="blue">开卡:开</Tag>
+      : <Tag key="ecc">开卡:关</Tag>)
+    tags.push(cfg.createCardCanaryEnabled === true
+      ? <Tag key="can" color="purple">灰度:开</Tag>
+      : <Tag key="can">灰度:关</Tag>)
+    return tags
+  }
+
+  // 获取 GEO 已同步 BIN 数量
+  const getGeoBinCount = (ch: any): string => {
+    // 直接从外部状态读取，通过 API 即可获得
+    return ''
   }
 
   // 只展示发卡渠道（排除 USDT 收款渠道）
@@ -153,6 +182,11 @@ export default function Channels() {
               <div style={{ marginTop: 12, fontSize: 12, color: '#666', wordBreak: 'break-all' }}>
                 {ch.api_base_url}
               </div>
+              {(ch.channel_code || '').toUpperCase() === 'GEO' && (
+                <div style={{ marginTop: 8 }}>
+                  {getGeoCanaryTags(ch)}
+                </div>
+              )}
             </Card>
           ))}
           {cardChannels.length === 0 && !loading && (
