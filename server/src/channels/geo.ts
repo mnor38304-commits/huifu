@@ -58,6 +58,41 @@ export interface GeoCard {
   rawJson: any;
 }
 
+export interface GeoCardholderCreateParams {
+  userReqNo: string;
+  cardUserId: string;     // GEO 持卡人标识: GEOU{userId}{timestamp}
+  mobile: string;          // 手机号
+  mobilePrefix: string;    // 手机号国际区号，如 86（不带 +）
+  email: string;
+  firstName: string;
+  lastName: string;
+  birthDate: string;       // yyyy-MM-dd
+  billingCity: string;
+  billingState: string;
+  billingCountry: string;  // GEO 国家名称，如 USA
+  billingAddress: string;
+  billingZipCode: string;
+  countryCode: string;     // 同上，如 USA
+}
+
+export interface GeoCardholder {
+  cardUserId: string;     // GEO 返回确认的持卡人 ID
+  status: string;
+  rawJson: any;
+}
+
+/**
+ * 生成 GEO 持卡人标识
+ * 格式: GEOU + userId + 时间戳（yyyyMMddHHmmss）+ 4 位随机数
+ * 示例: GEOU9202605021514001234
+ * 长度约 27 字符
+ */
+export function generateGeoCardUserId(userId: number): string {
+  const ts = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+  const rand = String(Math.floor(1000 + Math.random() * 9000));
+  return `GEOU${userId}${ts}${rand}`;
+}
+
 // ─── SDK ──────────────────────────────────────────────────────────────────────
 
 const CHUNK_SIZE = 117;   // RSA 1024 PKCS#1 单块最大明文
@@ -273,6 +308,39 @@ export class GeoSdk {
       cardVerifyNo: data.cardVerifyNo || '',
       cardExpiryDate: data.cardExpiryDate || '',
       status: status,
+      rawJson: this.sanitizeLog(data),
+    };
+  }
+
+  // ── 持卡人申请 ─────────────────────────────────────────────────────────
+
+  /**
+   * 申请注册 GEO 持卡人
+   * 返回的 cardUserId 是后续开卡时必须使用的字段
+   */
+  async createCardholder(params: GeoCardholderCreateParams): Promise<GeoCardholder> {
+    const body: Record<string, unknown> = {
+      userReqNo: params.userReqNo,
+      cardUserId: params.cardUserId,
+      mobile: params.mobile,
+      mobilePrefix: params.mobilePrefix,
+      email: params.email,
+      firstName: params.firstName,
+      lastName: params.lastName,
+      birthDate: params.birthDate,
+      billingCity: params.billingCity,
+      billingState: params.billingState,
+      billingCountry: params.billingCountry,
+      billingAddress: params.billingAddress,
+      billingZipCode: params.billingZipCode,
+      countryCode: params.countryCode,
+    };
+
+    const data: any = await this.request('POST', '/openapi/vcc/cardholder/apply', body);
+
+    return {
+      cardUserId: data.cardUserId || params.cardUserId,
+      status: data.status || '1',
       rawJson: this.sanitizeLog(data),
     };
   }
