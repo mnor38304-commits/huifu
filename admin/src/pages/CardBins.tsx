@@ -38,6 +38,9 @@ export default function CardBins() {
     try {
       const r: any = await getBins({ page: 1, pageSize: 50, channelCode: channelFilter })
       if (r.code === 0) { setList(r.data.list); setTotal(r.data.total) }
+      else if (r.code === 401) { /* 未登录，已由 interceptor 统一处理重定向 */ }
+    } catch (e: any) {
+      console.error('[CardBins] load failed:', e)
     } finally { setLoading(false) }
   }
 
