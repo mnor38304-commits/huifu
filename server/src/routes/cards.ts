@@ -73,8 +73,9 @@ async function getChannelSDK(): Promise<ChannelSDK> {
     if (!geoConfig.privateKey) {
       throw new Error('GEO RSA 配置不完整：缺少 privateKey');
     }
-    if (!geoConfig.publicKey) {
-      throw new Error('GEO RSA 配置不完整：缺少 publicKey');
+    const geoPublicKey = geoConfig.geoPublicKey || geoConfig.publicKey;
+    if (!geoPublicKey) {
+      throw new Error('GEO RSA 配置不完整：缺少 geoPublicKey');
     }
 
     const baseUrl = geoChannel.api_base_url || geoConfig.apiBaseUrl;
@@ -85,13 +86,13 @@ async function getChannelSDK(): Promise<ChannelSDK> {
     try {
       const { GeoSdk } = await import('../channels/geo');
       const sdk = new GeoSdk({
-        baseUrl: baseUrl,
+        baseUrl,
         userNo: geoConfig.userNo,
         privateKey: geoConfig.privateKey,
-        geoPublicKey: geoConfig.geoPublicKey,
+        geoPublicKey,
         customerPublicKey: geoConfig.customerPublicKey || '',
       });
-      console.log('[Channel] 使用 GEO 渠道 (RSA 4 参数模式)');
+      console.log('[Channel] 使用 GEO 渠道 (RSA 4 参数, privateEncrypt + geoPublicKey decrypt)');
       return { type: 'geo', sdk, channel: geoChannel };
     } catch (err: any) {
       console.error('[Channel] GEO SDK 加载失败:', err.message);
@@ -420,17 +421,16 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       });
 
       externalId = geoCard.cardId || '';
-      masked = geoCard.cardNoMasked || '';
-      if (!masked && geoCard.last4) {
-        masked = `****${geoCard.last4}`;
-      }
-      if (!masked) {
-        masked = `****${externalId.slice(-4)}`;
-      }
+      // GEO 返回完整 cardNo，只取 last4 做脱敏，不保存完整卡号
+      const geoLast4 = geoCard.cardNo ? geoCard.cardNo.slice(-4) : '';
+      masked = geoLast4 ? `****${geoLast4}` : `****${externalId.slice(-4)}`;
+      cardNo = '';
       cvv = '[查看卡号 → GEO 安全页面]';
-      expireDate = geoCard.expireDate || generateExpireDate();
-      effectiveInitialBalance = geoCard.balance ?? 0;
-      console.log('[GEO] 开卡成功:', externalId, masked, 'balance:', effectiveInitialBalance);
+      expireDate = geoCard.cardExpiryDate
+        ? geoCard.cardExpiryDate.slice(0, 7)
+        : generateExpireDate();
+      effectiveInitialBalance = 0;
+      console.log('[GEO] 开卡成功:', externalId, masked, 'expire:', expireDate);
     } catch (err: any) {
       console.error('[GEO] 开卡失败:', err.message);
       return res.json({
