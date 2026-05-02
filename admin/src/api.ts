@@ -66,6 +66,8 @@ export const updateChannel = (id, d) => BASE.put(`/cards/channels/${id}`, toSnak
 export const syncDogPayBins = () => BASE.post('/cards/channels/dogpay/sync-bins')
 // 同步GEO渠道的BIN
 export const syncGeoBins = () => BASE.post('/cards/channels/geo/sync-bins')
+// 同步UQPay渠道的BIN
+export const syncUqpayBins = () => BASE.post('/cards/channels/uqpay/sync-bins')
 
 // ── 持卡人管理（独立路由 /api/admin/cardholders）──────────────
 export const getCardholders = p => BASE.get('/cardholders', { params: p })

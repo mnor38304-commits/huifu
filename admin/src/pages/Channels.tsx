@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Table, Button, Tag, Space, Card, Modal, Form, Input, Select, message, Popconfirm } from 'antd'
 import { PlusOutlined, EditOutlined, ApiOutlined, SyncOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
-import { getChannels, createChannel, updateChannel, syncDogPayBins, syncGeoBins } from '../api'
+import { getChannels, createChannel, updateChannel, syncDogPayBins, syncGeoBins, syncUqpayBins } from '../api'
 
 const { Option } = Select
 
@@ -50,6 +50,8 @@ export default function Channels() {
       let r: any
       if (code === 'GEO') {
         r = await syncGeoBins()
+      } else if (code === 'UQPAY') {
+        r = await syncUqpayBins()
       } else {
         r = await syncDogPayBins()
       }
