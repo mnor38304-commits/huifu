@@ -1,4 +1,4 @@
-﻿import { Router, Response } from 'express';
+import { Router, Response } from 'express';
 import { randomUUID } from 'crypto';
 import db, { getDb, saveDatabase } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
@@ -871,23 +871,36 @@ router.get('/:id/pan-token', authMiddleware, async (req: AuthRequest, res: Respo
       return res.json({ code: 500, message: 'UQPay 渠道未配置', timestamp: Date.now() });
     }
 
-    const { token, expiresIn, expiresAt } = await channel.sdk.getPanToken(card.external_id);
-    const iframeUrl = channel.sdk.buildSecureIframeUrl(token, card.external_id, 'zh');
+    // 校验 external_id 是否有效（不能是本地 id 或 masked card_no）
+    const extId = String(card.external_id || '');
+    if (extId.length < 8 || extId.includes('*')) {
+      return res.json({ code: 400, message: '该卡缺少有效的渠道卡ID，无法查看完整卡信息，请联系管理员同步卡信息', timestamp: Date.now() });
+    }
+
+    const { token, expiresIn, expiresAt } = await channel.sdk.getPanToken(extId);
+    const iframeUrl = channel.sdk.buildSecureIframeUrl(token, extId, 'zh');
 
     res.json({
       code: 0,
       message: 'success',
       data: {
         iframeUrl,
-        cardId: card.external_id,
+        cardId: extId,
         expiresIn,    // 秒，60
         expiresAt,    // ISO 8601，过期时间
       },
       timestamp: Date.now(),
     });
   } catch (err: any) {
-    console.error('[UQPay] PAN Token 生成失败:', err.message);
-    return res.json({ code: 500, message: 'PAN Token 生成失败: ' + err.message, timestamp: Date.now() });
+    const extId = String(card?.external_id || '').slice(-4);
+    console.error("[UQPay] PAN Token 生成失败: localCardId=" + req.params.id + " extLast4=" + extId);
+    const msg = err.message || '';
+
+    // UQPay 返回 card_not_found → 卡在发卡渠道已不存在或停用
+    if (msg.includes('card_not_found') || msg.includes('deactivated')) {
+      return res.json({ code: 400, message: '该卡在发卡渠道不存在或已停用，无法查看完整卡信息', timestamp: Date.now() });
+    }
+    return res.json({ code: 500, message: 'PAN Token 生成失败: ' + msg, timestamp: Date.now() });
   }
 });
 
