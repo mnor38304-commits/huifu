@@ -62,17 +62,16 @@ export interface GeoCardholderCreateParams {
   userReqNo: string;
   cardUserId: string;     // GEO 持卡人标识: GEOU{userId}{timestamp}
   mobile: string;          // 手机号
-  mobilePrefix: string;    // 手机号国际区号，如 +86
+  mobilePrefix: string;    // 手机号国际区号，如 86（不带 +）
   email: string;
   firstName: string;
   lastName: string;
   birthDate: string;       // yyyy-MM-dd
   billingCity: string;
   billingState: string;
-  billingCountry: string;
   billingAddress: string;
   billingZipCode: string;
-  countryCode: string;     // 2 字母国家代码，如 SG/US
+  countryCode: string;     // 国家代码，中国传 CNH
 }
 
 export interface GeoCardholder {
@@ -330,7 +329,6 @@ export class GeoSdk {
       birthDate: params.birthDate,
       billingCity: params.billingCity,
       billingState: params.billingState,
-      billingCountry: params.billingCountry,
       billingAddress: params.billingAddress,
       billingZipCode: params.billingZipCode,
       countryCode: params.countryCode,
