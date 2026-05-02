@@ -475,6 +475,18 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     }
     geoCreateLocks.set(userId, true);
 
+    // ── 获取 GEO cardUserId ──
+    // 从 config_json.geoCardUserIds 映射表读取（key=本地userId, value=GEO cardUserId）
+    // 不使用 users.user_no，避免混淆
+    const geoCardUserIdMap = geoConfig.geoCardUserIds || {};
+    const geoCardUserId = geoCardUserIdMap[String(userId)] || '';
+
+    // cardUserId 为空则直接拒绝，不调用 GEO API
+    if (!geoCardUserId || !String(geoCardUserId).trim()) {
+      geoCreateLocks.delete(userId);
+      return res.json({ code: 400, message: 'GEO cardUserId 未配置，请先在渠道配置中设置 geoCardUserIds', timestamp: Date.now() });
+    }
+
     try {
       const sdk = channel.sdk as any;
       const geoCard = await sdk.createCard({
@@ -484,6 +496,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         currency: geoConfig.defaultCurrency || 'USD',
         binRangeId: selectedBin.external_bin_id,
         validityYears: geoConfig.defaultCardValidityYears || 2,
+        cardUserId: geoCardUserId,
       });
 
       // ── 安全落库 ──

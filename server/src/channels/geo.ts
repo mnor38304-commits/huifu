@@ -46,6 +46,7 @@ export interface GeoCardCreateParams {
   currency?: string;
   binRangeId: string;
   validityYears?: number;
+  cardUserId?: string;     // GEO 持卡人标识，正式环境必填
 }
 
 export interface GeoCard {
@@ -226,7 +227,7 @@ export class GeoSdk {
     const endDt = new Date(now.getFullYear() + validityYears, now.getMonth(), now.getDate());
     const endDate = endDt.getFullYear() + '-' + String(endDt.getMonth() + 1).padStart(2, '0') + '-' + String(endDt.getDate()).padStart(2, '0');
 
-    // 固定 payload 格式，不传 groupId/shareId/shareGroupId/poolId/sharedAccountId
+    // 固定 payload 格式，不传 groupId/shareId/shareGroupId/poolId/sharedAccountId/enableMultiUse
     const body: Record<string, unknown> = {
       userReqNo: crypto.randomUUID(),
       localCurrency: params.currency || 'USD',
@@ -238,6 +239,11 @@ export class GeoSdk {
       channelType: 1,
       CardAlias: params.cardName || 'GEO Card',
     };
+
+    // cardUserId: GEO 正式环境开卡必填（商户端持卡人标识）
+    if (params.cardUserId) {
+      body.cardUserId = params.cardUserId;
+    }
 
     const data: any = await this.request('POST', '/openapi/vcc/card/apply', body);
 
