@@ -82,42 +82,50 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
   }
 
   const {
-    firstName, lastName, email, phone, mobilePrefix, birthDate,
-    countryCode, billingCountry, billingState, billingCity,
-    billingAddress, billingZipCode,
+    firstName, lastName, email, phone, birthDate,
+    // UQPay SG 地址
+    uqpayAddressLine1, uqpayCity, uqpayState, uqpayPostalCode,
+    // GEO USA/HK 地址
+    geoCountryCode, geoBillingState, geoBillingCity, geoBillingAddress, geoBillingZipCode,
   } = req.body;
 
   // ── 校验 ──
   const errors: string[] = [];
+
+  // 基础身份
   if (!firstName || !firstName.trim()) errors.push('firstName 必填');
   if (!lastName || !lastName.trim()) errors.push('lastName 必填');
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) errors.push('email 格式不正确');
   if (!phone) errors.push('phone 必填');
   if (!birthDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(birthDate).trim())) errors.push('birthDate 格式必须为 YYYY-MM-DD');
-  const cc = String(countryCode || 'USA').toUpperCase();
-  if (!ALLOWED_COUNTRIES.includes(cc)) errors.push('countryCode 仅支持 USA/SG/HK');
-  const bc = String(billingCountry || cc).toUpperCase();
-  if (!ALLOWED_COUNTRIES.includes(bc)) errors.push('billingCountry 仅支持 USA/SG/HK');
-  if (!billingState || !billingState.trim()) errors.push('billingState 必填');
-  if (!billingCity || !billingCity.trim()) errors.push('billingCity 必填');
-  if (!billingAddress || !billingAddress.trim()) errors.push('billingAddress 必填');
-  if (!billingZipCode || !billingZipCode.trim()) errors.push('billingZipCode 必填');
+
+  // UQPay 地址：国家固定 SG
+  if (!uqpayAddressLine1 || !String(uqpayAddressLine1).trim()) errors.push('uqpayAddressLine1 必填');
+  if (!uqpayCity || !String(uqpayCity).trim()) errors.push('uqpayCity 必填');
+  if (!uqpayState || !String(uqpayState).trim()) errors.push('uqpayState 必填');
+
+  // GEO 地址
+  const geoCc = String(geoCountryCode || 'USA').toUpperCase();
+  if (!['USA', 'HK'].includes(geoCc)) errors.push('geoCountryCode 仅支持 USA 或 HK');
+  if (!geoBillingState || !String(geoBillingState).trim()) errors.push('geoBillingState 必填');
+  if (!geoBillingCity || !String(geoBillingCity).trim()) errors.push('geoBillingCity 必填');
+  if (!geoBillingAddress || !String(geoBillingAddress).trim()) errors.push('geoBillingAddress 必填');
+  if (!geoBillingZipCode || !String(geoBillingZipCode).trim()) errors.push('geoBillingZipCode 必填');
 
   if (errors.length > 0) {
     return res.json({ code: 400, message: errors.join('; '), timestamp: Date.now() });
   }
 
-  const mp = String(mobilePrefix || MOBILE_PREFIX_MAP[cc] || '1').replace(/^\+/, '');
+  const geoMp = geoCc === 'HK' ? '852' : '1';
+  const sanitizedEmail = email.trim();
 
-  // ── 创建本地 profile ──
+  // ── 创建本地 profile（只保存基础身份） ──
   const profileResult = db.prepare(`
     INSERT INTO user_cardholder_profiles
-      (user_id, first_name, last_name, email, phone, mobile_prefix, birth_date,
-       country_code, billing_country, billing_state, billing_city, billing_address, billing_zip_code)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (user_id, first_name, last_name, email, phone, birth_date, country_code)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
-    userId, firstName.trim(), lastName.trim(), email.trim(), phone.trim(), mp, birthDate.trim(),
-    cc, bc, billingState.trim(), billingCity.trim(), billingAddress.trim(), billingZipCode.trim(),
+    userId, firstName.trim(), lastName.trim(), sanitizedEmail, phone.trim(), birthDate.trim(), 'USA',
   );
   saveDatabase();
   const profileId = profileResult.lastInsertRowid as number;
@@ -128,7 +136,6 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
   ).all() as any[];
   const activeChannels: string[] = channelCodes.map((c: any) => c.channel_code.toUpperCase());
 
-  // ── 同步结果 ──
   interface SyncResult { channelCode: string; success: boolean; providerCardholderIdLast4?: string; error?: string }
   const syncResults: SyncResult[] = [];
 
@@ -151,10 +158,15 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
         });
 
         const result = await sdk.getOrCreateCardholder({
-          userId, email: email.trim(), firstName: firstName.trim(), lastName: lastName.trim(),
-          countryCode: cc === 'USA' ? 'US' : cc,
-          phoneNumber: phone.trim(), database: null,
+          userId,
+          email: sanitizedEmail,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          countryCode: 'SG',
+          phoneNumber: phone.trim(),
+          database: null,
         });
+
         providerId = result.cardholder_id || result.id || '';
         if (!providerId) throw new Error('UQPay 未返回 cardholder_id');
 
@@ -162,7 +174,7 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
         db.prepare(`
           INSERT OR REPLACE INTO uqpay_cardholders (user_id, uqpay_cardholder_id, email, phone_number, cardholder_status)
           VALUES (?, ?, ?, ?, 'SUCCESS')
-        `).run(userId, providerId, email.trim(), phone.trim());
+        `).run(userId, providerId, sanitizedEmail, phone.trim());
       }
 
       if (chCode === 'GEO') {
@@ -187,17 +199,17 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
           userReqNo: crypto.randomUUID(),
           cardUserId,
           mobile: phone.trim(),
-          mobilePrefix: mp,
-          email: email.trim(),
+          mobilePrefix: geoMp,
+          email: sanitizedEmail,
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           birthDate: birthDate.trim(),
-          billingCity: billingCity.trim(),
-          billingState: billingState.trim(),
-          billingCountry: bc,
-          billingAddress: billingAddress.trim(),
-          billingZipCode: billingZipCode.trim(),
-          countryCode: cc,
+          billingCity: geoBillingCity.trim(),
+          billingState: geoBillingState.trim(),
+          billingCountry: geoCc,
+          billingAddress: geoBillingAddress.trim(),
+          billingZipCode: geoBillingZipCode.trim(),
+          countryCode: geoCc,
         });
 
         providerId = result.cardUserId || cardUserId;
@@ -210,12 +222,44 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
           .run(JSON.stringify(geoConfig));
       }
 
+      // 构建该渠道的 provider_payload
+      let providerPayload: any = {};
+      if (chCode === 'UQPAY') {
+        providerPayload = {
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          email: sanitizedEmail,
+          phone: phone.trim(),
+          countryCode: 'SG',
+          addressLine1: String(uqpayAddressLine1 || '').trim(),
+          city: String(uqpayCity || '').trim(),
+          state: String(uqpayState || '').trim(),
+          postalCode: String(uqpayPostalCode || '').trim(),
+        };
+      }
+      if (chCode === 'GEO') {
+        providerPayload = {
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          email: sanitizedEmail,
+          mobile: phone.trim(),
+          mobilePrefix: geoMp,
+          birthDate: birthDate.trim(),
+          countryCode: geoCc,
+          billingCountry: geoCc,
+          billingState: geoBillingState.trim(),
+          billingCity: geoBillingCity.trim(),
+          billingAddress: geoBillingAddress.trim(),
+          billingZipCode: geoBillingZipCode.trim(),
+        };
+      }
+
       // 写入 cardholder_channel_accounts
       db.prepare(`
         INSERT OR REPLACE INTO cardholder_channel_accounts
-          (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status)
-        VALUES (?, ?, ?, ?, ?, 'success')
-      `).run(profileId, userId, chCode, providerId, email.trim());
+          (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status, provider_payload_json)
+        VALUES (?, ?, ?, ?, ?, 'success', ?)
+      `).run(profileId, userId, chCode, providerId, sanitizedEmail, JSON.stringify(providerPayload));
 
       saveDatabase();
       syncResults.push({
@@ -231,7 +275,7 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
         INSERT OR REPLACE INTO cardholder_channel_accounts
           (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status, last_error)
         VALUES (?, ?, ?, '', ?, 'failed', ?)
-      `).run(profileId, userId, chCode, email.trim(), msg);
+      `).run(profileId, userId, chCode, sanitizedEmail, msg);
 
       saveDatabase();
       syncResults.push({

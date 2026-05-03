@@ -175,6 +175,7 @@ async function start() {
       UNIQUE(profile_id, channel_code)
     )
   `).run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE cardholder_channel_accounts ADD COLUMN provider_payload_json TEXT").run(); } catch (_) {}
   try { db.prepare(`
     CREATE INDEX IF NOT EXISTS idx_chan_acc_user_channel ON cardholder_channel_accounts(user_id, channel_code)
   `).run(); } catch (_) {}
