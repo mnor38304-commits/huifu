@@ -200,8 +200,12 @@ const CardholderManagement: React.FC = () => {
           <Form.Item name="phone" label="手机号" rules={[{ required: true, message: '必填' }, { pattern: /^[\d\s\-\+\(\)]{6,20}$/, message: '手机号格式不正确' }]}>
             <Input placeholder="1234567890" />
           </Form.Item>
-          <Form.Item name="countryCode" label="国家码" initialValue="US" rules={[{ pattern: /^[A-Z]{2}$/, message: '必须为 2 位大写国家码' }]}>
-            <Input placeholder="US" maxLength={2} style={{ width: 100 }} />
+          <Form.Item name="countryCode" label="国家" initialValue="USA" rules={[{ required: true, message: '请选择国家' }]}>
+            <Select placeholder="选择国家" style={{ width: 120 }}>
+              <Option value="USA">USA</Option>
+              <Option value="SG">SG</Option>
+              <Option value="HK">HK</Option>
+            </Select>
           </Form.Item>
           <Form.Item name="addressLine1" label="详细地址" rules={[{ required: true, message: '必填' }, { min: 2, message: '至少 2 个字符' }]}>
             <Input placeholder="123 Main Street" />
