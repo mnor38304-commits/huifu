@@ -188,32 +188,6 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
   }
 });
 
-// ── 商户端获取持卡人列表（必须在 :id 路由之前注册） ─────────────────
-
-router.get('/cardholders', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
-  const { channelCode } = req.query;
-  const cc = String(channelCode || '').toUpperCase();
-
-  if (!cc) {
-    return res.json({ code: 400, message: '请指定渠道', timestamp: Date.now() });
-  }
-
-  const rows = db.prepare(`
-    SELECT id, uqpay_cardholder_id, email
-    FROM uqpay_cardholders
-    WHERE user_id = ? AND (cardholder_status IS NULL OR cardholder_status IN ('SUCCESS','ACTIVE',''))
-    ORDER BY id DESC
-  `).all(req.user!.userId);
-
-  const data = rows.map((r: any) => ({
-    id: r.id,
-    email: r.email,
-    cardholderIdLast4: r.uqpay_cardholder_id ? r.uqpay_cardholder_id.slice(-4) : '',
-  }));
-
-  res.json({ code: 0, message: 'success', data, timestamp: Date.now() });
-});
-
 // ── 我的卡片列表 ────────────────────────────────────────────────────────────
 
 router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
@@ -330,20 +304,20 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         return res.json({ code: 401, message: '用户不存在', timestamp: Date.now() });
       }
 
-      // 1. 获取 UQPay 持卡人 — 从 uqpay_cardholders 表查当前商户的持卡人
-      const uqpayHolder = db.prepare(`
-        SELECT uqpay_cardholder_id, email, cardholder_status
-        FROM uqpay_cardholders
-        WHERE user_id = ? AND (cardholder_status IS NULL OR cardholder_status IN ('SUCCESS','ACTIVE',''))
+      // 1. 获取该渠道持卡人 — 从 cardholder_channel_accounts 表查
+      const holder = db.prepare(`
+        SELECT provider_cardholder_id, sync_status
+        FROM cardholder_channel_accounts
+        WHERE user_id = ? AND channel_code = 'UQPAY' AND sync_status = 'success'
         ORDER BY id DESC LIMIT 1
       `).get(req.user!.userId) as any;
 
-      if (!uqpayHolder || !uqpayHolder.uqpay_cardholder_id) {
+      if (!holder || !holder.provider_cardholder_id) {
         console.log('[UQPay] 商户无持卡人: userId=' + req.user!.userId);
-        return res.json({ code: 400, message: '请先创建 UQPay 持卡人后再开卡', timestamp: Date.now() });
+        return res.json({ code: 400, message: '请先创建持卡人后再开卡', timestamp: Date.now() });
       }
 
-      const realCardholderId = uqpayHolder.uqpay_cardholder_id;
+      const realCardholderId = holder.provider_cardholder_id;
       uqpayCardholderId = realCardholderId;
       console.log('[UQPay] 使用持卡人: userId=' + req.user!.userId + ' cardholderIdLast4=' + realCardholderId.slice(-4));
 
@@ -536,15 +510,27 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     }
     geoCreateLocks.set(userId, true);
 
-    // ── 获取 GEO cardUserId ──
-    // 从 config_json.geoCardUserIds 映射表读取
-    const geoCardUserIdMap = geoConfig.geoCardUserIds || {};
-    const geoCardUserId = geoCardUserIdMap[String(userId)] || '';
+    // ── 获取 GEO provider_cardholder_id ──
+    // 优先使用 cardholder_channel_accounts 表
+    let geoCardUserId = '';
+    const geoHolder = db.prepare(`
+      SELECT provider_cardholder_id, sync_status
+      FROM cardholder_channel_accounts
+      WHERE user_id = ? AND channel_code = 'GEO' AND sync_status = 'success'
+      ORDER BY id DESC LIMIT 1
+    `).get(userId) as any;
+    if (geoHolder?.provider_cardholder_id) {
+      geoCardUserId = geoHolder.provider_cardholder_id;
+    } else {
+      // fallback: 读取 config_json.geoCardUserIds 旧表
+      const geoCardUserIdMap = geoConfig.geoCardUserIds || {};
+      geoCardUserId = geoCardUserIdMap[String(userId)] || '';
+    }
 
     // cardUserId 为空则直接拒绝，不调用 GEO API
     if (!geoCardUserId || !String(geoCardUserId).trim()) {
       geoCreateLocks.delete(userId);
-      return res.json({ code: 400, message: 'GEO 持卡人未创建，请先创建 GEO 持卡人', timestamp: Date.now() });
+      return res.json({ code: 400, message: 'GEO 持卡人未创建，请先创建持卡人', timestamp: Date.now() });
     }
 
     // 17. 一个 cardUserId 最多 5 张卡

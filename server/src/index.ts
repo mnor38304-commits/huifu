@@ -4,12 +4,13 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import bcrypt from 'bcryptjs';
-import db, { initDatabase } from './db';
+import db, { initDatabase, saveDatabase } from './db';
 
 // 商户端路由
 import authRoutes from './routes/auth-resend-v2';
 import kycRoutes from './routes/kyc';
 import cardRoutes from './routes/cards';
+import cardholderRoutes from './routes/cardholders';
 import transactionRoutes from './routes/transactions';
 import billRoutes from './routes/bills';
 import noticeRoutes from './routes/notices';
@@ -80,6 +81,7 @@ app.use('/api/v1/notices', noticeRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/upload', uploadRoutes);
 app.use('/api/v1/dashboard', clientDashboardRoutes);
+app.use('/api/v1/cardholders', cardholderRoutes);
 
 // ── 管理员 API ────────────────────────────────────────────────
 app.use('/api/admin/auth', adminAuthRoutes);
@@ -128,6 +130,128 @@ async function start() {
   try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN completed_at DATETIME").run(); } catch (_) {}
   try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN refunded_at DATETIME").run(); } catch (_) {}
   try { db.prepare("ALTER TABLE uqpay_recharge_orders ADD COLUMN uqpay_card_id TEXT").run(); } catch (_) {}
+
+  // ── 统一持卡人迁移 ──────────────────────────────────────────
+  try { db.prepare(`
+    CREATE TABLE IF NOT EXISTS user_cardholder_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT,
+      mobile_prefix TEXT,
+      birth_date TEXT,
+      country_code TEXT DEFAULT 'USA',
+      billing_country TEXT DEFAULT 'USA',
+      billing_state TEXT,
+      billing_city TEXT,
+      billing_address TEXT,
+      billing_zip_code TEXT,
+      address_line1 TEXT,
+      city TEXT,
+      state TEXT,
+      postal_code TEXT,
+      status TEXT DEFAULT 'ACTIVE',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run(); } catch (_) {}
+  try { db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_profile_user_id ON user_cardholder_profiles(user_id)
+  `).run(); } catch (_) {}
+  try { db.prepare(`
+    CREATE TABLE IF NOT EXISTS cardholder_channel_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      channel_code TEXT NOT NULL,
+      provider_cardholder_id TEXT NOT NULL,
+      provider_email TEXT,
+      sync_status TEXT DEFAULT 'pending',
+      last_error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(profile_id, channel_code)
+    )
+  `).run(); } catch (_) {}
+  try { db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_chan_acc_user_channel ON cardholder_channel_accounts(user_id, channel_code)
+  `).run(); } catch (_) {}
+
+  // ── 数据迁移：从旧表同步到统一表 ──────────────────────────
+  try {
+    // 迁移 UQPAY：从 uqpay_cardholders 表
+    const uqpayRows = db.prepare(`
+      SELECT user_id, email, phone_number, uqpay_cardholder_id, cardholder_status
+      FROM uqpay_cardholders WHERE user_id IS NOT NULL AND user_id > 0
+    `).all() as any[];
+    for (const row of uqpayRows) {
+      // 检查是否已有 profile
+      const existing = db.prepare(
+        "SELECT id FROM user_cardholder_profiles WHERE user_id=? AND LOWER(email)=LOWER(?)"
+      ).get(row.user_id, row.email || '') as any;
+      if (!existing) {
+        const user = db.prepare("SELECT nickname FROM users WHERE id=?").get(row.user_id) as any;
+        const fName = 'User';
+        const lName = String(row.user_id);
+        db.prepare(`
+          INSERT INTO user_cardholder_profiles (user_id, first_name, last_name, email, phone, status)
+          VALUES (?, ?, ?, ?, ?, 'ACTIVE')
+        `).run(row.user_id, fName, lName, row.email || '', row.phone_number || '');
+      }
+      // 获取 profile_id
+      const profile = db.prepare(
+        "SELECT id FROM user_cardholder_profiles WHERE user_id=? AND LOWER(email)=LOWER(?)"
+      ).get(row.user_id, row.email || '') as any;
+      if (profile) {
+        db.prepare(`
+          INSERT OR IGNORE INTO cardholder_channel_accounts
+            (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status)
+          VALUES (?, ?, 'UQPAY', ?, ?, 'success')
+        `).run(profile.id, row.user_id, row.uqpay_cardholder_id, row.email || '');
+      }
+    }
+
+    // 迁移 GEO：从 card_channels.config_json.geoCardUserIds
+    const geoChan = db.prepare("SELECT config_json FROM card_channels WHERE UPPER(channel_code)='GEO'").get() as any;
+    if (geoChan?.config_json) {
+      try {
+        const cfg = JSON.parse(geoChan.config_json);
+        const geoMap = cfg.geoCardUserIds || {};
+        for (const [uid, geoId] of Object.entries(geoMap)) {
+          const userId = parseInt(uid);
+          if (!userId || userId <= 0) continue;
+          const user = db.prepare("SELECT email FROM users WHERE id=?").get(userId) as any;
+          if (!user || !user.email) continue;
+          const existing = db.prepare(
+            "SELECT id FROM user_cardholder_profiles WHERE user_id=? AND LOWER(email)=LOWER(?)"
+          ).get(userId, user.email) as any;
+          if (!existing) {
+            db.prepare(`
+              INSERT INTO user_cardholder_profiles (user_id, first_name, last_name, email, status)
+              VALUES (?, 'User', ?, ?, 'ACTIVE')
+            `).run(userId, String(userId), user.email);
+          }
+          const profile = db.prepare(
+            "SELECT id FROM user_cardholder_profiles WHERE user_id=? AND LOWER(email)=LOWER(?)"
+          ).get(userId, user.email) as any;
+          if (profile) {
+            db.prepare(`
+              INSERT OR IGNORE INTO cardholder_channel_accounts
+                (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status)
+              VALUES (?, ?, 'GEO', ?, ?, 'success')
+            `).run(profile.id, userId, String(geoId), user.email);
+          }
+        }
+      } catch (_) {}
+    }
+
+    saveDatabase();
+    console.log('[Migrate] 统一持卡人迁移完成');
+  } catch (e: any) {
+    console.warn('[Migrate] 统一持卡人迁移警告:', e.message);
+  }
 
   // 初始化默认管理员账号
   const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as any).c;
