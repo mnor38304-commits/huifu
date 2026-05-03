@@ -16,7 +16,7 @@
  */
 
 import { Router, Response } from 'express';
-import db from '../db';
+import db, { saveDatabase } from '../db';
 import { adminAuth, AdminRequest, requireAdminRole, writeAdminLog } from './admin-auth';
 import { getCardholderAdapter, listChannelCodes } from '../services/cardholder-adapters';
 import { dogpayMaskUtils, checkDogPayCreateCardholderConfig } from '../services/cardholder-adapters/dogpay-cardholder-adapter';
@@ -359,6 +359,90 @@ router.post('/batch/create', requireAdminRole('admin', 'super'), async (req: Adm
     data: { total: rows.length, success, failed, results },
     timestamp: Date.now(),
   });
+});
+
+// ── 8. 修改持卡人邮箱（仅 UQPAY） ──────────────────────────────────────────
+
+function maskEmail(email: string): string {
+  const at = email.indexOf('@');
+  if (at <= 1) return email;
+  return email[0] + '***' + email.substring(at);
+}
+
+router.patch('/:id/email', requireAdminRole('admin', 'super'), async (req: AdminRequest, res) => {
+  const { email } = req.body;
+
+  if (!email || !String(email || '').trim()) {
+    return res.json({ code: 400, message: '邮箱不能为空', timestamp: Date.now() });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+    return res.json({ code: 400, message: '邮箱格式不正确', timestamp: Date.now() });
+  }
+
+  const cardholder = db.prepare('SELECT * FROM cardholders WHERE id = ?').get(req.params.id) as any;
+  if (!cardholder) {
+    return res.json({ code: 404, message: '持卡人不存在', timestamp: Date.now() });
+  }
+  if (cardholder.channel_code !== 'UQPAY') {
+    return res.json({ code: 400, message: '当前仅支持修改 UQPay 持卡人邮箱', timestamp: Date.now() });
+  }
+  if (!cardholder.external_id) {
+    return res.json({ code: 400, message: '该持卡人缺少 UQPay cardholder_id，无法修改邮箱', timestamp: Date.now() });
+  }
+
+  // 邮箱唯一性检查（同渠道下）
+  const existing = db.prepare(
+    'SELECT id FROM cardholders WHERE UPPER(channel_code)=? AND LOWER(email)=LOWER(?) AND id != ?'
+  ).get('UQPAY', email.trim(), req.params.id) as any;
+  if (existing) {
+    return res.json({ code: 400, message: '该邮箱已被其他 UQPay 持卡人使用', timestamp: Date.now() });
+  }
+
+  try {
+    const { UqPaySDK } = await import('../channels/uqpay');
+    const channel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='UQPAY' AND status=1").get() as any;
+    if (!channel) return res.json({ code: 503, message: 'UQPay 渠道未启用', timestamp: Date.now() });
+
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
+
+    const sdk = new UqPaySDK({
+      clientId: config.clientId || channel.api_key || '',
+      apiKey: config.apiSecret || channel.api_secret || '',
+      baseUrl: channel.api_base_url,
+    });
+
+    await sdk.updateCardholderEmail(cardholder.external_id, email.trim());
+
+    // 更新本地
+    const newEmail = email.trim();
+    db.prepare('UPDATE cardholders SET email=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(newEmail, req.params.id);
+    saveDatabase();
+
+    writeAdminLog({
+      adminId: req.admin?.id || 0,
+      adminName: req.admin?.username || '',
+      action: 'UPDATE_CARDHOLDER_EMAIL',
+      targetType: 'cardholder',
+      targetId: Number(req.params.id),
+      detail: `channel=UQPAY email=${maskEmail(newEmail)}`,
+      req,
+    });
+
+    console.log('[Admin] UQPay 持卡人邮箱已更新: id=' + req.params.id + ' email=' + maskEmail(newEmail));
+    res.json({ code: 0, message: '邮箱修改成功', timestamp: Date.now() });
+  } catch (err: any) {
+    const msg = err.message || '';
+    console.error('[Admin] UQPay 修改邮箱失败: id=' + req.params.id + ' email=' + maskEmail(String(email || '')) + ' error=' + msg.slice(0, 200));
+
+    if (msg.includes('email_duplicated') || msg.includes('duplicate')) {
+      return res.json({ code: 400, message: '该邮箱已被其他持卡人使用', timestamp: Date.now() });
+    }
+    if (msg.includes('not_found') || msg.includes('不存在')) {
+      return res.json({ code: 400, message: 'UQPay 持卡人不存在或已失效', timestamp: Date.now() });
+    }
+    return res.json({ code: 503, message: '邮箱修改失败: ' + msg.slice(0, 200), timestamp: Date.now() });
+  }
 });
 
 export default router;

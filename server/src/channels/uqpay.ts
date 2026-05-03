@@ -1102,6 +1102,23 @@ export class UqPaySDK {
   // ── BIN 同步 ────────────────────────────────────────────────────────────
 
   /**
+   * 更新 UQPay 持卡人邮箱
+   *
+   * API: POST /api/v1/issuing/cardholders/{cardholderId}
+   * 请求体只包含 email，不修改其他字段
+   */
+  async updateCardholderEmail(cardholderId: string, email: string): Promise<any> {
+    const res = await this.request<any>(
+      'POST',
+      `/api/v1/issuing/cardholders/${cardholderId}`,
+      { email },
+      { 'x-idempotency-key': randomUUID() },
+    );
+    console.log('[UQPay] 持卡人邮箱已更新: cardholderId=' + cardholderId.slice(-4) + ' email=' + email.split('@')[0].slice(0, 1) + '***@' + email.split('@')[1]);
+    return res;
+  }
+
+  /**
    * 将 UQPay 卡产品同步到 card_bins 表
    *
    * SINGLE-only 规则：

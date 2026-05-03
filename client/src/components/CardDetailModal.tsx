@@ -7,7 +7,7 @@ import {
   SearchOutlined, ReloadOutlined, EyeOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import VirtualCard from './VirtualCard';
-import { getCardEnhancedDetail, getCardTransactions, getCardOperations, revealCard, getPanToken } from '../services/api';
+import { getCardEnhancedDetail, getCardTransactions, getCardOperations, revealCard, getPanToken, updateCardholderEmail } from '../services/api';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -57,6 +57,11 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
     status: '',
     keyword: '',
   });
+
+  // Cardholder email edit state
+  const [emailEditVisible, setEmailEditVisible] = useState(false);
+  const [emailEditValue, setEmailEditValue] = useState('');
+  const [emailEditLoading, setEmailEditLoading] = useState(false);
 
   // Operation state
   const [opsLoading, setOpsLoading] = useState(false);
@@ -413,6 +418,15 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                       {detail.failedTxnCount || 0}
                     </span>
                   </Descriptions.Item>
+                  <Descriptions.Item label="持卡人邮箱" span={2}>
+                    <span>{detail.cardholderEmail || '-'}</span>
+                    {detail.cardholderEmailEditable && (
+                      <Button type="link" size="small" style={{ marginLeft: 8 }}
+                        onClick={() => { setEmailEditValue(detail.cardholderEmail || ''); setEmailEditVisible(true) }}>
+                        编辑
+                      </Button>
+                    )}
+                  </Descriptions.Item>
                   <Descriptions.Item label="发卡地">{detail.issueCountry}</Descriptions.Item>
                   <Descriptions.Item label="账单地址" span={3}>{detail.billingAddress || '—'}</Descriptions.Item>
                 </Descriptions>
@@ -571,6 +585,39 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
             </>
           )}
         </Spin>
+      </Modal>
+
+      {/* ── 修改持卡人邮箱弹窗 ── */}
+      <Modal
+        title="修改持卡人邮箱"
+        open={emailEditVisible}
+        onCancel={() => setEmailEditVisible(false)}
+        onOk={async () => {
+          if (!cardId || !emailEditValue) { message.warning('请输入邮箱'); return }
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailEditValue)) { message.warning('邮箱格式不正确'); return }
+          setEmailEditLoading(true)
+          try {
+            const res = await updateCardholderEmail(cardId, emailEditValue.trim())
+            if (res.code === 0) {
+              message.success('邮箱修改成功')
+              setEmailEditVisible(false)
+              loadDetail()
+            } else {
+              message.error(res.message)
+            }
+          } catch (err: any) {
+            message.error(err?.response?.data?.message || '修改失败')
+          } finally {
+            setEmailEditLoading(false)
+          }
+        }}
+        confirmLoading={emailEditLoading}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 12 }}>新邮箱地址：</div>
+        <Input placeholder="请输入新邮箱" value={emailEditValue} onChange={e => setEmailEditValue(e.target.value)} type="email" />
       </Modal>
     </>
   );

@@ -131,4 +131,8 @@ export const getStatusBreakdown = (params: any) => api.get('/dashboard/status-br
 export const getFailureReasons = (params: any) => api.get('/dashboard/failure-reasons', { params })
 export const getRecentTransactions = (params: any) => api.get('/dashboard/recent-transactions', { params })
 
+// ── 持卡人邮箱 ────────────────────────────────────────────────────────
+export const updateCardholderEmail = (cardId: number, email: string) =>
+  api.patch(`/cards/${cardId}/cardholder-email`, { email })
+
 export default api
