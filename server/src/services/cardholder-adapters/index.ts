@@ -14,9 +14,13 @@
 
 import { CardholderAdapter } from './types';
 import { dogpayCardholderAdapter } from './dogpay-cardholder-adapter';
+import { uqpayCardholderAdapter } from './uqpay-cardholder-adapter';
+import { geoCardholderAdapter } from './geo-cardholder-adapter';
 
 const ADAPTER_REGISTRY: Record<string, CardholderAdapter> = {
   DOGPAY: dogpayCardholderAdapter,
+  UQPAY: uqpayCardholderAdapter,
+  GEO: geoCardholderAdapter,
 };
 
 /**

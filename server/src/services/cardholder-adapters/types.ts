@@ -53,6 +53,14 @@ export interface NormalizedCardholderInput {
   addressLine1: string;
   city: string;
   state: string;
+  /** GEO 专用扩展 */
+  mobilePrefix?: string;
+  birthDate?: string;
+  billingCountry?: string;
+  billingState?: string;
+  billingCity?: string;
+  billingAddress?: string;
+  billingZipCode?: string;
   /** 渠道专有扩展字段 */
   extra?: Record<string, any>;
 }

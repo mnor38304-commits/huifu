@@ -40,10 +40,15 @@ function getAdapter(channelCode: string): { adapter: ReturnType<typeof getCardho
 // ── 1. 持卡人列表 ──────────────────────────────────────────────────────────
 
 router.get('/', requireAdminRole('admin', 'super'), (req: AdminRequest, res) => {
-  const { page = 1, pageSize = 20, channel = 'DOGPAY', status, kycStatus, keyword } = req.query;
-  let sql = 'SELECT * FROM cardholders WHERE channel_code = ?';
-  const params: any[] = [channel || 'DOGPAY'];
+  const { page = 1, pageSize = 20, channel = 'ALL', status, kycStatus, keyword } = req.query;
+  let sql = 'SELECT * FROM cardholders WHERE 1=1';
+  const params: any[] = [];
 
+  const ch = String(channel || 'ALL').toUpperCase();
+  if (ch !== 'ALL') {
+    sql += ' AND channel_code = ?';
+    params.push(ch);
+  }
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (kycStatus) { sql += ' AND kyc_status = ?'; params.push(kycStatus); }
   if (keyword) {
