@@ -1641,4 +1641,87 @@ router.patch('/:id/cardholder-email', authMiddleware, async (req: AuthRequest, r
   }
 });
 
+// ── 同步卡片状态（中性，不暴露渠道） ────────────────────────────────
+
+router.post('/:id/sync-status', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+  if (!card.external_id) {
+    return res.json({ code: 400, message: '该卡片暂不支持状态同步', timestamp: Date.now() });
+  }
+
+  try {
+    const channel = await getChannelSDK();
+    if (channel.type === 'uqpay' && channel.sdk) {
+      const detail = await channel.sdk.getCard(card.external_id);
+      const cardStatus = detail.card_status || '';
+      const rawStatus = cardStatus.toUpperCase();
+
+      let newStatus: number;
+      if (['ACTIVE', 'SUCCESS', 'COMPLETED'].includes(rawStatus)) {
+        newStatus = 1;
+      } else if (['FROZEN', 'SUSPENDED', 'BLOCKED'].includes(rawStatus)) {
+        newStatus = 2;
+      } else if (['CANCELLED', 'CLOSED', 'EXPIRED'].includes(rawStatus)) {
+        newStatus = 4;
+      } else if (['PENDING', 'PROCESSING', 'INITIATED'].includes(rawStatus)) {
+        newStatus = 0;
+      } else {
+        newStatus = 0;
+      }
+
+      // 更新 masked card number
+      let newMasked = card.card_no_masked;
+      if (detail.last4 && detail.last4 !== card.card_no_masked?.slice?.(-4)) {
+        newMasked = `**** **** **** ${detail.last4}`;
+      }
+
+      // 更新 expire_date
+      let newExpire = card.expire_date;
+      if (detail.expiry_year && detail.expiry_month) {
+        newExpire = `${detail.expiry_year}-${detail.expiry_month.padStart(2, '0')}`;
+      }
+
+      // 更新 balance（UQPay card_available_balance 是余额，不是限额）
+      const newBalance = detail.card_available_balance;
+
+      console.log('[Sync] cardId=' + req.params.id + ' externalIdLast4=' + (card.external_id.slice(-4)) +
+        ' status=' + newStatus + ' masked=' + newMasked + ' balance=' + newBalance);
+
+      db.prepare(`
+        UPDATE cards SET status=?, card_no_masked=?, expire_date=?, balance=?,
+          updated_at=CURRENT_TIMESTAMP WHERE id=?
+      `).run(newStatus, newMasked, newExpire, newBalance, Number(req.params.id));
+      saveDatabase();
+
+      return res.json({
+        code: 0,
+        message: '卡片状态已刷新',
+        data: { status: newStatus, cardNoMasked: newMasked, expireDate: newExpire, balance: newBalance },
+        timestamp: Date.now(),
+      });
+    } else if (channel.type === 'dogpay' && (channel.sdk as any)?.getCard) {
+      try {
+        const detail = await (channel.sdk as any).getCard(card.external_id);
+        if (detail?.status) {
+          let newStatus = 0;
+          if (['1', 'active', 'success'].includes(String(detail.status).toLowerCase())) newStatus = 1;
+          else if (['2', 'frozen', 'suspend'].includes(String(detail.status).toLowerCase())) newStatus = 2;
+          else if (['4', 'cancelled', 'closed'].includes(String(detail.status).toLowerCase())) newStatus = 4;
+          db.prepare('UPDATE cards SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+            .run(newStatus, Number(req.params.id));
+          saveDatabase();
+        }
+      } catch (_) { /* dogpay getCard 暂不可用时不阻止 */ }
+    }
+
+    return res.json({ code: 0, message: '卡片状态已刷新', timestamp: Date.now() });
+  } catch (err: any) {
+    console.error('[Sync] 状态同步失败: cardId=' + req.params.id + ' error=' + (err.message || '').slice(0, 200));
+    return res.json({ code: 500, message: '卡片状态同步失败，请稍后重试', timestamp: Date.now() });
+  }
+});
+
 export default router;

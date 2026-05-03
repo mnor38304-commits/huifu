@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react'
 import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip, Radio, DatePicker, Card, Row, Col, Spin } from 'antd'
 import {
   PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined,
-  DeleteOutlined, WalletOutlined, TransactionOutlined, EditOutlined, ClockCircleOutlined, SearchOutlined, ReloadOutlined, UserOutlined
+  DeleteOutlined, WalletOutlined, TransactionOutlined, EditOutlined, ClockCircleOutlined, SearchOutlined, ReloadOutlined, UserOutlined, SyncOutlined
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
   getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard,
-  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry, renewCard,
+  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry, renewCard, syncCardStatus,
   getMyCardholderProfiles
 } from '../services/api'
 import CardDetailModal from '../components/CardDetailModal'
@@ -137,6 +137,25 @@ const Cards: React.FC = () => {
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '操作失败')
+    }
+  }
+
+  const [syncingId, setSyncingId] = useState<number | null>(null)
+
+  const handleSyncStatus = async (id: number) => {
+    setSyncingId(id)
+    try {
+      const res = await syncCardStatus(id)
+      if (res.code === 0) {
+        message.success('卡片状态已刷新')
+        loadCards()
+      } else {
+        message.error(res.message)
+      }
+    } catch {
+      message.error('状态刷新失败，请稍后重试')
+    } finally {
+      setSyncingId(null)
     }
   }
 
@@ -432,7 +451,14 @@ const Cards: React.FC = () => {
               </Button>
             </Tooltip>
           )}
-          {record.status === 1 && (
+          {record.status === 0 && (
+            <Button type="link" size="small" icon={<SyncOutlined />} style={{ color: '#1677ff' }}
+              loading={syncingId === record.id}
+              onClick={() => handleSyncStatus(record.id)}>
+              刷新状态
+            </Button>
+          )}
+          {record.status === 0 && (
             <Button type="link" size="small" danger onClick={() => handleFreeze(record.id, true)}>
               <LockOutlined /> 冻结
             </Button>
@@ -454,9 +480,9 @@ const Cards: React.FC = () => {
               </Button>
             </Popconfirm>
           )}
-          {record.status !== 4 && (
+          {record.status === 1 && (
             <Button type="link" size="small" icon={<ClockCircleOutlined />} style={{ color: '#8c8c8c' }} onClick={() => openExpiryModal(record)}>
-              {record.status === 2 && record.auto_frozen_reason === 'USAGE_EXPIRED' ? '延长使用时间' : '设置到期时间'}
+              设置到期时间
             </Button>
           )}
         </Space>

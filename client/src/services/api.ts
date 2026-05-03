@@ -152,4 +152,7 @@ export const updateProfileEmail = (id: number, email: string) => api.patch(`/car
 // ── 续期解冻 ──────────────────────────────────────────────────────────
 export const renewCard = (cardId: number, months: number) => api.post(`/cards/${cardId}/renew`, { months })
 
+// ── 同步卡片状态 ──────────────────────────────────────────────────────
+export const syncCardStatus = (cardId: number) => api.post(`/cards/${cardId}/sync-status`)
+
 export default api
