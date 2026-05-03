@@ -725,21 +725,19 @@ router.get('/:id/detail', authMiddleware, (req: AuthRequest, res: Response<ApiRe
   let cardholderEmail = '';
   let cardholderEmailEditable = false;
   if (card.channel_code === 'UQPAY' && card.uqpay_cardholder_id) {
-    // UQPay 卡：从 cardholders 表查找
-    const ch = db.prepare("SELECT email FROM cardholders WHERE external_id = ? AND channel_code = 'UQPAY'")
+    // UQPay 卡：从 uqpay_cardholders 表查找（该表保存 UQPay 返回的 cardholder_id 与 email 映射）
+    const uch = db.prepare("SELECT email FROM uqpay_cardholders WHERE uqpay_cardholder_id = ?")
       .get(card.uqpay_cardholder_id) as any;
-    if (ch?.email) {
-      cardholderEmail = ch.email;
-      cardholderEmailEditable = true;
-    } else {
-      // fallback: uqpay_cardholders 表
-      const uch = db.prepare("SELECT email FROM uqpay_cardholders WHERE uqpay_cardholder_id = ?")
-        .get(card.uqpay_cardholder_id) as any;
-      if (uch?.email) {
-        cardholderEmail = uch.email;
-      }
-      cardholderEmailEditable = true;
+    if (uch?.email) {
+      cardholderEmail = uch.email;
     }
+    // 如果 uqpay_cardholders 没有，尝试 cardholders 表
+    if (!cardholderEmail) {
+      const ch = db.prepare("SELECT email FROM cardholders WHERE external_id = ? AND channel_code = 'UQPAY'")
+        .get(card.uqpay_cardholder_id) as any;
+      if (ch?.email) cardholderEmail = ch.email;
+    }
+    cardholderEmailEditable = true;
   } else if (card.channel_code !== 'UQPAY') {
     // 其他渠道显示客户注册邮箱
     const user = db.prepare("SELECT email FROM users WHERE id = ?").get(card.user_id) as any;
@@ -1504,9 +1502,9 @@ router.patch('/:id/cardholder-email', authMiddleware, async (req: AuthRequest, r
     return res.json({ code: 400, message: '该卡未绑定 UQPay 持卡人，无法修改邮箱', timestamp: Date.now() });
   }
 
-  // 邮箱唯一性检查
+  // 邮箱唯一性检查（基于 uqpay_cardholders 表）
   const existing = db.prepare(
-    "SELECT id FROM cardholders WHERE UPPER(channel_code)='UQPAY' AND LOWER(email)=LOWER(?) AND external_id != ?"
+    "SELECT id FROM uqpay_cardholders WHERE LOWER(email)=LOWER(?) AND uqpay_cardholder_id != ?"
   ).get(email.trim(), card.uqpay_cardholder_id) as any;
   if (existing) {
     return res.json({ code: 400, message: '该邮箱已被其他 UQPay 持卡人使用', timestamp: Date.now() });
@@ -1528,9 +1526,12 @@ router.patch('/:id/cardholder-email', authMiddleware, async (req: AuthRequest, r
 
     await sdk.updateCardholderEmail(card.uqpay_cardholder_id, email.trim());
 
-    // 更新 cardholders 表
+    // 更新 cardholders 表（如存在匹配记录）
     const newEmail = email.trim();
     db.prepare("UPDATE cardholders SET email=?, updated_at=CURRENT_TIMESTAMP WHERE external_id=? AND channel_code='UQPAY'")
+      .run(newEmail, card.uqpay_cardholder_id);
+    // 同步更新 uqpay_cardholders 表（主数据源）
+    db.prepare("UPDATE uqpay_cardholders SET email=? WHERE uqpay_cardholder_id=?")
       .run(newEmail, card.uqpay_cardholder_id);
     saveDatabase();
 

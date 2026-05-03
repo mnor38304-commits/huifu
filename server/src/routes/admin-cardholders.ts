@@ -417,6 +417,7 @@ router.patch('/:id/email', requireAdminRole('admin', 'super'), async (req: Admin
     // 更新本地
     const newEmail = email.trim();
     db.prepare('UPDATE cardholders SET email=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(newEmail, req.params.id);
+    db.prepare("UPDATE uqpay_cardholders SET email=? WHERE uqpay_cardholder_id=?").run(newEmail, cardholder.external_id);
     saveDatabase();
 
     writeAdminLog({
