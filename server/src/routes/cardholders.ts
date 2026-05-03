@@ -103,6 +103,7 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
   if (!uqpayAddressLine1 || !String(uqpayAddressLine1).trim()) errors.push('uqpayAddressLine1 必填');
   if (!uqpayCity || !String(uqpayCity).trim()) errors.push('uqpayCity 必填');
   if (!uqpayState || !String(uqpayState).trim()) errors.push('uqpayState 必填');
+  if (!uqpayPostalCode || !String(uqpayPostalCode).trim()) errors.push('uqpayPostalCode 必填');
 
   // GEO 地址
   const geoCc = String(geoCountryCode || 'USA').toUpperCase();
