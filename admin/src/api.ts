@@ -78,6 +78,7 @@ export const batchCreateCardholders = d => BASE.post('/cardholders/batch/create'
 export const getCardholderSchema = (channelCode: string) => BASE.get(`/cardholders/schema?channelCode=${channelCode}`)
 export const getCardholderChannelList = () => BASE.get('/cardholders/schema/list')
 export const downloadCardholderTemplate = (channelCode = 'DOGPAY') => `/api/admin/cardholders/template/download?channelCode=${channelCode}`
+export const updateCardholderEmail = (id: number, email: string) => BASE.patch(`/cardholders/${id}/email`, { email })
 export const getUsdtOrders = p => BASE.get('/usdt/orders', { params: p })
 export const confirmUsdt = (id, tx) => BASE.post(`/usdt/orders/${id}/confirm`, { txHash: tx })
 export const getUsdtStats = () => BASE.get('/usdt/stats')

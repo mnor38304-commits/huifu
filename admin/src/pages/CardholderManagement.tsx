@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Card, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Upload, Alert, Row, Col, Statistic, Spin } from 'antd'
-import { PlusOutlined, DownloadOutlined, UploadOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
-import { getCardholders, createCardholder, batchValidateCardholders, batchCreateCardholders, downloadCardholderTemplate, getCardholderSchema, getCardholderChannelList } from '../api'
+import { PlusOutlined, DownloadOutlined, UploadOutlined, EyeOutlined, EditOutlined } from '@ant-design/icons'
+import { getCardholders, createCardholder, batchValidateCardholders, batchCreateCardholders, downloadCardholderTemplate, getCardholderSchema, getCardholderChannelList, updateCardholderEmail } from '../api'
 import type { ColumnsType } from 'antd/es/table'
 
 const { Option } = Select
@@ -116,6 +116,12 @@ const CardholderManagement: React.FC = () => {
   // 详情
   const [detailModal, setDetailModal] = useState(false)
   const [detailData, setDetailData] = useState<any>(null)
+
+  // 修改邮箱
+  const [emailEditModal, setEmailEditModal] = useState(false)
+  const [emailEditId, setEmailEditId] = useState<number | null>(null)
+  const [emailEditValue, setEmailEditValue] = useState('')
+  const [emailEditLoading, setEmailEditLoading] = useState(false)
 
   // 加载渠道列表
   useEffect(() => {
@@ -263,9 +269,17 @@ const CardholderManagement: React.FC = () => {
     },
     { title: '创建时间', dataIndex: 'created_at', width: 140, render: (v: string) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
     {
-      title: '操作', width: 60,
+      title: '操作', width: 80,
       render: (_: any, r: any) => (
-        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setDetailData(r); setDetailModal(true) }}>详情</Button>
+        <Space>
+          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setDetailData(r); setDetailModal(true) }}>详情</Button>
+          {r.channel_code === 'UQPAY' && (
+            <Button type="link" size="small" icon={<EditOutlined />}
+              onClick={() => { setEmailEditId(r.id); setEmailEditValue(r.email || ''); setEmailEditModal(true) }}>
+              修改邮箱
+            </Button>
+          )}
+        </Space>
       ),
     },
   ]
@@ -428,6 +442,25 @@ const CardholderManagement: React.FC = () => {
             {detailData.error_message && <p><strong>错误信息:</strong><span style={{ color: '#ff4d4f' }}>{detailData.error_message}</span></p>}
           </div>
         )}
+      </Modal>
+
+      {/* ── 修改邮箱弹窗 ── */}
+      <Modal title="修改持卡人邮箱" open={emailEditModal} onCancel={() => setEmailEditModal(false)} footer={null} destroyOnClose>
+        <Form layout="vertical" onFinish={async (values) => {
+          if (!emailEditId) return
+          setEmailEditLoading(true)
+          try {
+            const r = await updateCardholderEmail(emailEditId, values.email.trim())
+            if (r.code === 0) { message.success('邮箱修改成功'); setEmailEditModal(false); loadList() }
+            else message.error(r.message)
+          } catch { message.error('修改失败') }
+          finally { setEmailEditLoading(false) }
+        }}>
+          <Form.Item name="email" label="新邮箱" rules={[{ required: true, message: '请输入邮箱' }, { type: 'email', message: '邮箱格式不正确' }]} initialValue={emailEditValue}>
+            <Input placeholder="请输入新邮箱" type="email" />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" loading={emailEditLoading} block>保存</Button>
+        </Form>
       </Modal>
     </div>
   )
