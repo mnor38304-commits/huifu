@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Table, Button, Modal, Form, Input, Select, Space, message, Spin, Row, Col, Alert, Tag } from 'antd'
 import { PlusOutlined, UserOutlined, EyeOutlined } from '@ant-design/icons'
 import {
-  getMyCardholderProfiles, createMyCardholder, syncMyCardholder, updateCardholderEmail
+  getMyCardholderProfiles, createMyCardholder, getMyCardholderDetail, updateProfileEmail
 } from '../services/api'
 
 const { Option } = Select
@@ -56,9 +56,14 @@ const Cardholders: React.FC = () => {
   const [emailEditValue, setEmailEditValue] = useState('')
   const [emailEditLoading, setEmailEditLoading] = useState(false)
 
-  const openDetail = (row: any) => {
+  const openDetail = async (row: any) => {
     setDetailData(row)
     setEmailEditValue('')
+    // 获取完整详情
+    try {
+      const res = await getMyCardholderDetail(row.id)
+      if (res.code === 0) setDetailData({ ...row, ...res.data })
+    } catch { /* ignore */ }
     setDetailVisible(true)
   }
 
@@ -67,7 +72,7 @@ const Cardholders: React.FC = () => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailEditValue)) { message.warning('邮箱格式不正确'); return }
     setEmailEditLoading(true)
     try {
-      const res = await updateCardholderEmail(detailData.id, emailEditValue.trim())
+      const res = await updateProfileEmail(detailData.id, emailEditValue.trim())
       if (res.code === 0) {
         message.success('邮箱修改成功')
         setDetailVisible(false)

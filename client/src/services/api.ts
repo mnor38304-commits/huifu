@@ -145,4 +145,8 @@ export const getMyCardholderCurrent = () => api.get('/cardholders/current')
 export const createMyCardholder = (data: any) => api.post('/cardholders', data)
 export const syncMyCardholder = (profileId: number) => api.post(`/cardholders/${profileId}/sync`)
 
+// ── 持卡人详情/邮箱 ──────────────────────────────────────────────
+export const getMyCardholderDetail = (id: number) => api.get(`/cardholders/${id}`)
+export const updateProfileEmail = (id: number, email: string) => api.patch(`/cardholders/${id}/email`, { email })
+
 export default api

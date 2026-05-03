@@ -385,4 +385,96 @@ router.post('/:id/sync', async (req: AuthRequest, res: Response<ApiResponse>) =>
   });
 });
 
+// ── 查询单个持卡人详情（中性返回） ────────────────────────────────
+
+router.get('/:id', (req: AuthRequest, res: Response<ApiResponse>) => {
+  const profile = db.prepare(`
+    SELECT id, first_name, last_name, email, phone, mobile_prefix, birth_date,
+           country_code, state, city, address_line1, address_line2, postal_code, status
+    FROM user_cardholder_profiles
+    WHERE id = ? AND user_id = ?
+  `).get(req.params.id, req.user!.userId) as any;
+
+  if (!profile) {
+    return res.json({ code: 404, message: '持卡人不存在', timestamp: Date.now() });
+  }
+
+  res.json({
+    code: 0,
+    message: 'success',
+    data: {
+      id: profile.id,
+      firstName: profile.first_name,
+      lastName: profile.last_name,
+      emailMasked: profile.email ? maskEmail(profile.email) : '',
+      phoneMasked: profile.phone ? '****' + profile.phone.slice(-4) : '',
+      mobilePrefix: profile.mobile_prefix || '',
+      birthDate: profile.birth_date || '',
+      countryCode: profile.country_code || '',
+      state: profile.state || '',
+      city: profile.city || '',
+      addressLine1: profile.address_line1 || '',
+      addressLine2: profile.address_line2 || '',
+      postalCode: profile.postal_code || '',
+      status: profile.status || 'active',
+    },
+    timestamp: Date.now(),
+  });
+});
+
+// ── 修改持卡人邮箱（中性，不暴露渠道） ─────────────────────────────
+
+router.patch('/:id/email', async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const { email } = req.body;
+  if (!email || !String(email || '').trim()) {
+    return res.json({ code: 400, message: '邮箱不能为空', timestamp: Date.now() });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+    return res.json({ code: 400, message: '邮箱格式不正确', timestamp: Date.now() });
+  }
+
+  const profile = db.prepare("SELECT id, email FROM user_cardholder_profiles WHERE id=? AND user_id=?")
+    .get(req.params.id, req.user!.userId) as any;
+  if (!profile) {
+    return res.json({ code: 404, message: '持卡人不存在', timestamp: Date.now() });
+  }
+
+  const newEmail = email.trim();
+
+  // 更新本地 profile
+  db.prepare("UPDATE user_cardholder_profiles SET email=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+    .run(newEmail, Number(req.params.id));
+
+  // 尝试同步 UQPay
+  try {
+    const uqpayAccount = db.prepare(
+      "SELECT provider_cardholder_id FROM cardholder_channel_accounts WHERE profile_id=? AND channel_code='UQPAY' AND sync_status='success'"
+    ).get(Number(req.params.id)) as any;
+    if (uqpayAccount?.provider_cardholder_id) {
+      const { UqPaySDK } = await import('../channels/uqpay');
+      const channel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='UQPAY' AND status=1").get() as any;
+      if (channel) {
+        let config: Record<string, any> = {};
+        try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
+        const sdk = new UqPaySDK({
+          clientId: config.clientId || channel.api_key || '',
+          apiKey: config.apiSecret || channel.api_secret || '',
+          baseUrl: channel.api_base_url,
+        });
+        await sdk.updateCardholderEmail(uqpayAccount.provider_cardholder_id, newEmail);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Cardholder] UQPay 邮箱同步失败: profileId=' + req.params.id + ' error=' + (err.message || '').slice(0, 200));
+  }
+
+  // 更新映射表邮箱
+  db.prepare("UPDATE cardholder_channel_accounts SET provider_email=? WHERE profile_id=?").run(newEmail, Number(req.params.id));
+  try { db.prepare("UPDATE uqpay_cardholders SET email=? WHERE user_id=?").run(newEmail, req.user!.userId); } catch (_) {}
+  saveDatabase();
+
+  console.log('[Cardholder] 邮箱已更新: profileId=' + req.params.id + ' email=' + maskEmail(newEmail));
+  res.json({ code: 0, message: '持卡人邮箱修改成功', timestamp: Date.now() });
+});
+
 export default router;
