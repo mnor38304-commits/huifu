@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip, Radio, DatePicker } from 'antd'
+import { Table, Button, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Space, Alert, Tooltip, Radio, DatePicker, Card, Row, Col, Spin } from 'antd'
 import {
   PlusOutlined, EyeOutlined, LockOutlined, UnlockOutlined,
-  DeleteOutlined, WalletOutlined, TransactionOutlined, EditOutlined, ClockCircleOutlined, SearchOutlined, ReloadOutlined
+  DeleteOutlined, WalletOutlined, TransactionOutlined, EditOutlined, ClockCircleOutlined, SearchOutlined, ReloadOutlined, UserOutlined, SyncOutlined
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
   getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard,
-  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry
+  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry,
+  getMyCardholderCurrent, createMyCardholder, syncMyCardholder
 } from '../services/api'
 import CardDetailModal from '../components/CardDetailModal'
 
@@ -23,6 +24,20 @@ const Cards: React.FC = () => {
   const [creating, setCreating] = useState(false)
   const [form] = Form.useForm()
 
+  // ── 持卡人状态 ──
+  const [cardholderProfile, setCardholderProfile] = useState<any>(null)
+  const [cardholderChannels, setCardholderChannels] = useState<any[]>([])
+  const [cardholderLoading, setCardholderLoading] = useState(false)
+
+  // ── 创建持卡人 ──
+  const [chModalVisible, setChModalVisible] = useState(false)
+  const [chForm] = Form.useForm()
+  const [chCreating, setChCreating] = useState(false)
+  const [chGeoCountry, setChGeoCountry] = useState('USA')
+
+  // ── 重试同步 ──
+  const [chSyncing, setChSyncing] = useState(false)
+
   // Filter state
   const [filterCardNo, setFilterCardNo] = useState('')
   const [filterFailedCount, setFilterFailedCount] = useState('')
@@ -37,7 +52,30 @@ const Cards: React.FC = () => {
 
   useEffect(() => {
     loadCards()
+    loadCardholder()
   }, [])
+
+  const loadCardholder = async () => {
+    setCardholderLoading(true)
+    try {
+      const res = await getMyCardholderCurrent()
+      if (res.code === 0) {
+        const d = res.data
+        if (d?.profileId && d?.profileId > 0) {
+          setCardholderProfile(d)
+          setCardholderChannels(d.channels || [])
+        } else {
+          setCardholderProfile(null)
+          setCardholderChannels([])
+        }
+      }
+    } catch { /* ignore */ }
+    finally { setCardholderLoading(false) }
+  }
+
+  const getChannelSyncStatus = (channelCode: string) => {
+    return cardholderChannels.find(c => c.channelCode === channelCode)
+  }
 
   const loadCards = async () => {
     try {
@@ -87,6 +125,17 @@ const Cards: React.FC = () => {
   }
 
   const handleCreate = async (values: any) => {
+    // 检查对应渠道是否已同步
+    const selectedBin = availableBins.find(b => b.id === values.binId)
+    const channelCode = selectedBin?.channel_code?.toUpperCase()
+    if (channelCode) {
+      const ch = getChannelSyncStatus(channelCode)
+      if (!ch || ch.syncStatus !== 'success') {
+        message.warning(`请先同步 ${channelCode} 持卡人后再开卡`)
+        return
+      }
+    }
+
     setCreating(true)
     try {
       const res = await createCard(values)
@@ -142,7 +191,6 @@ const Cards: React.FC = () => {
   const [topupForm] = Form.useForm()
 
   const openTopupModal = (record: any) => {
-    // UQPay 卡：充值需走渠道真实资金接口，本地接口不可用
     if (record.external_id) {
       message.info('UQPay 卡充值接口待接入渠道真实资金接口，暂不可用')
       return
@@ -260,10 +308,53 @@ const Cards: React.FC = () => {
 
   const handleWithdraw = (record: any) => {
     if (record.external_id) {
-      // UQPay 卡：暂不支持
       message.info('UQPay 卡余额转出接口待接入，暂不可用')
     } else {
       message.info('余额转出功能待接入渠道接口后开放')
+    }
+  }
+
+  // ── 创建持卡人 ──
+  const openChModal = () => {
+    chForm.resetFields()
+    chForm.setFieldsValue({ geoCountryCode: 'USA' })
+    setChGeoCountry('USA')
+    setChModalVisible(true)
+  }
+
+  const handleChCreate = async (values: any) => {
+    setChCreating(true)
+    try {
+      const res = await createMyCardholder(values)
+      if (res.code === 0) {
+        message.success(res.message || '持卡人创建完成')
+        setChModalVisible(false)
+        await loadCardholder()
+      } else {
+        message.error(res.message)
+      }
+    } catch {
+      message.error('创建持卡人失败')
+    } finally {
+      setChCreating(false)
+    }
+  }
+
+  const handleChSync = async () => {
+    if (!cardholderProfile?.profileId) return
+    setChSyncing(true)
+    try {
+      const res = await syncMyCardholder(cardholderProfile.profileId)
+      if (res.code === 0) {
+        message.success('同步完成')
+        await loadCardholder()
+      } else {
+        message.error(res.message)
+      }
+    } catch {
+      message.error('同步失败')
+    } finally {
+      setChSyncing(false)
     }
   }
 
@@ -435,10 +526,48 @@ const Cards: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2>VCC 卡片管理</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-          开卡
-        </Button>
+        <Space>
+          <Button icon={<UserOutlined />} onClick={openChModal} type="default">
+            {cardholderProfile ? '管理持卡人' : '创建持卡人'}
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+            开卡
+          </Button>
+        </Space>
       </div>
+
+      {/* ── 持卡人状态卡片 ── */}
+      <Spin spinning={cardholderLoading}>
+        {cardholderProfile && (
+          <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+            <Row gutter={16} align="middle">
+              <Col><UserOutlined style={{ fontSize: 20, color: '#1677ff' }} /></Col>
+              <Col>
+                <span style={{ fontWeight: 500 }}>持卡人邮箱：</span>
+                <span>{cardholderProfile.emailMasked || '-'}</span>
+              </Col>
+              {cardholderChannels.map(ch => (
+                <Col key={ch.channelCode}>
+                  <Tag color={ch.syncStatus === 'success' ? 'green' : ch.syncStatus === 'failed' ? 'red' : 'orange'}>
+                    {ch.channelCode}：{ch.syncStatus === 'success' ? '已同步' : ch.syncStatus === 'failed' ? '失败' : '未同步'}
+                    {ch.syncStatus === 'success' && ch.providerCardholderIdLast4 && ` (****${ch.providerCardholderIdLast4})`}
+                  </Tag>
+                </Col>
+              ))}
+              {cardholderChannels.some(c => c.syncStatus !== 'success') && (
+                <Col>
+                  <Button size="small" icon={<SyncOutlined />} loading={chSyncing} onClick={handleChSync}>
+                    重试同步
+                  </Button>
+                </Col>
+              )}
+            </Row>
+          </Card>
+        )}
+        {!cardholderProfile && !cardholderLoading && (
+          <Alert style={{ marginBottom: 16 }} type="info" showIcon message="请先创建持卡人后再开卡。" />
+        )}
+      </Spin>
 
       {/* ── 查询筛选栏 ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -480,21 +609,44 @@ const Cards: React.FC = () => {
         pagination={{ pageSize: 10 }}
       />
 
+      {/* ── 创建新卡片 ── */}
       <Modal
         title="创建新卡片"
         open={createModalVisible}
         onCancel={() => setCreateModalVisible(false)}
         footer={null}
-        width={500}
+        width={550}
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
           {createModalVisible && !binsLoading && availableBins.length === 0 && (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 16 }}
-              message="当前暂无可用卡 BIN，开卡可能失败，请联系管理员同步并启用可用 BIN。"
-            />
+            <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+              message="当前暂无可用卡 BIN，开卡可能失败，请联系管理员同步并启用可用 BIN。" />
+          )}
+
+          {/* 持卡人状态提示 */}
+          {createModalVisible && (
+            <Form.Item shouldUpdate={(prev, cur) => prev.binId !== cur.binId}>
+              {({ getFieldValue }) => {
+                const binId = getFieldValue('binId')
+                const bin = availableBins.find(b => b.id === binId)
+                const cc = bin?.channel_code?.toUpperCase()
+                const ch = cardholderChannels.find(c => c.channelCode === cc)
+                const syncOk = cc ? (ch?.syncStatus === 'success') : true
+                return (
+                  <Alert
+                    type={syncOk ? 'success' : 'warning'}
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message={
+                      !cc ? '请选择卡 BIN' :
+                      !cardholderProfile ? '请先创建持卡人后再开卡' :
+                      syncOk ? `${cc} 持卡人已同步（${ch?.syncStatus === 'success' ? '****' + ch?.providerCardholderIdLast4 : ''}）` :
+                      `请先同步 ${cc} 持卡人后再开卡`
+                    }
+                  />
+                )
+              }}
+            </Form.Item>
           )}
 
           <Form.Item name="cardName" label="卡片名称" rules={[{ required: true, message: '请输入卡片名称' }]}>
@@ -502,10 +654,11 @@ const Cards: React.FC = () => {
           </Form.Item>
 
           <Form.Item name="binId" label="卡 BIN" rules={availableBins.length ? [{ required: true, message: '请选择卡 BIN' }] : []}>
-            <Select loading={binsLoading} placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} allowClear>
+            <Select loading={binsLoading} placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} allowClear
+              onChange={() => form.setFieldsValue({})}>
               {availableBins.map((bin) => (
                 <Option key={bin.id} value={bin.id}>
-                  {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''}
+                  {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''} - {bin.channel_code || ''}
                 </Option>
               ))}
             </Select>
@@ -535,22 +688,156 @@ const Cards: React.FC = () => {
             <Input placeholder="例如：广告投放、平台入驻" />
           </Form.Item>
 
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={creating} block>
-              确认开卡
-            </Button>
+          <Form.Item shouldUpdate>
+            {({ getFieldValue }) => {
+              const binId = getFieldValue('binId')
+              const bin = availableBins.find(b => b.id === binId)
+              const cc = bin?.channel_code?.toUpperCase()
+              const ch = cardholderChannels.find(c => c.channelCode === cc)
+              const canCreate = !cc || (cardholderProfile && ch?.syncStatus === 'success')
+              return (
+                <Button type="primary" htmlType="submit" loading={creating} block disabled={!canCreate}>
+                  确认开卡
+                </Button>
+              )
+            }}
           </Form.Item>
         </Form>
       </Modal>
 
+      {/* ── 创建/管理持卡人弹窗 ── */}
+      <Modal title="创建持卡人" open={chModalVisible} onCancel={() => setChModalVisible(false)} footer={null} width={650} destroyOnClose>
+        {!cardholderProfile ? (
+          <Spin spinning={chCreating}>
+            <Form form={chForm} layout="vertical" onFinish={handleChCreate}>
+              <Alert type="info" showIcon message="基础身份信息" style={{ marginBottom: 16 }} />
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="firstName" label="名 (First Name)" rules={[{ required: true, message: '必填' }, { pattern: /^[a-zA-Z\s\-']+$/, message: '只能包含字母' }]}>
+                    <Input placeholder="John" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="lastName" label="姓 (Last Name)" rules={[{ required: true, message: '必填' }, { pattern: /^[a-zA-Z\s\-']+$/, message: '只能包含字母' }]}>
+                    <Input placeholder="Doe" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Form.Item name="email" label="邮箱" rules={[{ required: true, message: '必填' }, { type: 'email', message: '邮箱格式不正确' }]}>
+                <Input placeholder="john@example.com" type="email" />
+              </Form.Item>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="phone" label="手机号" rules={[{ required: true, message: '必填' }, { pattern: /^[\d\s\-\(\)]{6,20}$/, message: '手机号格式不正确' }]}>
+                    <Input placeholder="1234567890" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="birthDate" label="出生日期" rules={[{ required: true, message: '必填' }, { pattern: /^\d{4}-\d{2}-\d{2}$/, message: '格式必须为 YYYY-MM-DD' }]}>
+                    <Input placeholder="1990-01-01" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Alert type="info" showIcon message="UQPay 持卡人地址仅支持新加坡，请填写新加坡账单地址。" style={{ marginBottom: 16, marginTop: 8 }} />
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item name="uqpayCountryCode" label="国家" initialValue="SG">
+                    <Input disabled />
+                  </Form.Item>
+                </Col>
+                <Col span={16}>
+                  <Form.Item name="uqpayAddressLine1" label="地址" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="1 Raffles Place" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item name="uqpayCity" label="城市" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="Singapore" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="uqpayState" label="州/省" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="Singapore" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="uqpayPostalCode" label="邮编" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="048616" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Alert type="info" showIcon message="GEO 持卡人地址仅支持美国或香港。" style={{ marginBottom: 16, marginTop: 8 }} />
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item name="geoCountryCode" label="国家" rules={[{ required: true, message: '请选择国家' }]} initialValue="USA">
+                    <Select onChange={(val) => setChGeoCountry(val)}>
+                      <Option value="USA">USA</Option>
+                      <Option value="HK">HK</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="手机区号" shouldUpdate>
+                    {() => <Input value={chGeoCountry === 'HK' ? '852' : '1'} disabled />}
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="geoBillingState" label="州/省" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder={chGeoCountry === 'HK' ? 'Hong Kong' : 'CA'} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item name="geoBillingCity" label="城市" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder={chGeoCountry === 'HK' ? 'Hong Kong' : 'Los Angeles'} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="geoBillingAddress" label="地址" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder={chGeoCountry === 'HK' ? '1 Central' : '123 Main Street'} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="geoBillingZipCode" label="邮编" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder={chGeoCountry === 'HK' ? '999077' : '90001'} />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Button type="primary" htmlType="submit" loading={chCreating} block style={{ marginTop: 16 }}>
+                创建持卡人
+              </Button>
+            </Form>
+          </Spin>
+        ) : (
+          <div>
+            <p><strong>持卡人邮箱：</strong>{cardholderProfile.emailMasked || '-'}</p>
+            <h4 style={{ marginTop: 16 }}>渠道同步状态</h4>
+            {cardholderChannels.map(ch => (
+              <div key={ch.channelCode} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Tag color={ch.syncStatus === 'success' ? 'green' : ch.syncStatus === 'failed' ? 'red' : 'orange'}
+                  style={{ fontSize: 14, padding: '4px 8px' }}>
+                  {ch.channelCode}：{ch.syncStatus === 'success' ? '已同步' : ch.syncStatus === 'failed' ? '同步失败' : '未同步'}
+                  {ch.syncStatus === 'success' && ch.providerCardholderIdLast4 && ` (****${ch.providerCardholderIdLast4})`}
+                </Tag>
+                {ch.syncStatus !== 'success' && (
+                  <Button size="small" icon={<SyncOutlined />} onClick={handleChSync}>重试</Button>
+                )}
+              </div>
+            ))}
+            <Button style={{ marginTop: 16 }} onClick={() => setChModalVisible(false)}>关闭</Button>
+          </div>
+        )}
+      </Modal>
+
       {/* ── 充值弹窗 ── */}
       <Modal
-        title={
-          <Space>
-            <WalletOutlined />
-            <span>卡片充值</span>
-          </Space>
-        }
+        title={<Space><WalletOutlined /><span>卡片充值</span></Space>}
         open={topupModalVisible}
         onCancel={() => setTopupModalVisible(false)}
         onOk={handleTopup}
@@ -570,88 +857,32 @@ const Cards: React.FC = () => {
               ${topupCardBalance.toFixed(2)}
             </div>
           </div>
-          <Form.Item
-            name="amount"
-            label="充值金额 (USD)"
-            rules={[
-              { required: true, message: '请输入充值金额' },
-              { type: 'number', min: 0.01, message: '金额必须大于 0' },
-            ]}
-          >
-            <InputNumber
-              placeholder="请输入充值金额"
-              min={0.01}
-              max={100000}
-              step={10}
-              style={{ width: '100%' }}
-              size="large"
-              prefix="$"
-              autoFocus
-            />
+          <Form.Item name="amount" label="充值金额 (USD)"
+            rules={[{ required: true, message: '请输入充值金额' }, { type: 'number', min: 0.01, message: '金额必须大于 0' }]}>
+            <InputNumber placeholder="请输入充值金额" min={0.01} max={100000} step={10} style={{ width: '100%' }} size="large" prefix="$" autoFocus />
           </Form.Item>
         </Form>
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginTop: 8 }}
-          message="充值将从钱包余额中扣除，请确保钱包余额充足。"
-        />
+        <Alert type="info" showIcon style={{ marginTop: 8 }} message="充值将从钱包余额中扣除，请确保钱包余额充足。" />
       </Modal>
 
       {/* ── 卡片详情弹窗 ── */}
-      <CardDetailModal
-        cardId={detailModalCardId}
-        visible={detailModalVisible}
-        onClose={closeCardDetail}
-      />
+      <CardDetailModal cardId={detailModalCardId} visible={detailModalVisible} onClose={closeCardDetail} />
 
       {/* ── 编辑备注弹窗 ── */}
-      <Modal
-        title="编辑卡片备注"
-        open={remarkModalVisible}
-        onCancel={() => setRemarkModalVisible(false)}
-        onOk={handleRemarkSubmit}
-        confirmLoading={remarkSubmitting}
-        okText="保存"
-        cancelText="取消"
-        destroyOnClose
-      >
+      <Modal title="编辑卡片备注" open={remarkModalVisible} onCancel={() => setRemarkModalVisible(false)}
+        onOk={handleRemarkSubmit} confirmLoading={remarkSubmitting} okText="保存" cancelText="取消" destroyOnClose>
         <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
           卡片: <strong>{remarkCardName}</strong>
         </div>
-        <div style={{ marginBottom: 8, color: '#666', fontSize: 12 }}>
-          可备注使用者姓名、用途、平台名称等
-        </div>
-        <Input
-          placeholder="输入卡片备注"
-          value={remarkValue}
-          onChange={e => setRemarkValue(e.target.value)}
-          maxLength={100}
-          showCount
-        />
+        <Input placeholder="输入卡片备注" value={remarkValue} onChange={e => setRemarkValue(e.target.value)} maxLength={100} showCount />
       </Modal>
 
       {/* ── 使用到期时间设置弹窗 ── */}
-      <Modal
-        title={isUsageExpiredFrozen ? '延长使用时间' : '设置使用到期时间'}
-        open={expiryModalVisible}
-        onCancel={() => setExpiryModalVisible(false)}
-        onOk={handleExpirySubmit}
-        confirmLoading={expirySubmitting}
-        okText="确认"
-        cancelText="取消"
-        destroyOnClose
-      >
-        <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
-          卡片: <strong>{expiryCardName}</strong>
-        </div>
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="设置使用到期时间后，卡片到期会自动冻结。延长使用时间后，因到期被冻结的卡片会自动恢复正常。"
-        />
-        <div style={{ marginBottom: 8, fontWeight: 500 }}>选择使用期限</div>
+      <Modal title={isUsageExpiredFrozen ? '延长使用时间' : '设置使用到期时间'}
+        open={expiryModalVisible} onCancel={() => setExpiryModalVisible(false)}
+        onOk={handleExpirySubmit} confirmLoading={expirySubmitting} okText="确认" cancelText="取消" destroyOnClose>
+        <Alert type="info" showIcon style={{ marginBottom: 16 }}
+          message="设置使用到期时间后，卡片到期会自动冻结。延长使用时间后，因到期被冻结的卡片会自动恢复正常。" />
         <Radio.Group value={expiryPreset} onChange={e => setExpiryPreset(e.target.value)}>
           <Radio.Button value="1m">1个月</Radio.Button>
           <Radio.Button value="3m">3个月</Radio.Button>
