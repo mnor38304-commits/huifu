@@ -187,14 +187,12 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
       bins = bins.filter((bin: any) => !!bin.external_bin_id);
     }
 
-    // 脱敏：移除商户端不应看到的字段
+    // 脱敏：商户端不暴露 bin_code（UQPay product 返回的 card_bin 与实际 PAN 前缀可能不一致），
+    // 改为中性产品名称，避免客户因 BIN 前缀误解。
     const sanitized = bins.map((bin: any) => ({
       id: bin.id,
-      bin_code: bin.bin_code,
-      bin_name: bin.bin_name,
-      card_brand: bin.card_brand,
+      productName: bin.card_brand ? `${bin.card_brand} 虚拟卡` : '虚拟卡',
       currency: bin.currency,
-      country: bin.country,
       open_fee: bin.open_fee,
       topup_fee_rate: bin.topup_fee_rate,
       monthly_fee: bin.monthly_fee,

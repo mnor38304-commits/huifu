@@ -543,11 +543,11 @@ const Cards: React.FC = () => {
             <Input placeholder="例如：Facebook广告卡" />
           </Form.Item>
 
-          <Form.Item name="binId" label="卡 BIN" rules={availableBins.length ? [{ required: true, message: '请选择卡 BIN' }] : []}>
-            <Select loading={binsLoading} placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} allowClear>
+          <Form.Item name="binId" label="卡产品" rules={availableBins.length ? [{ required: true, message: '请选择卡产品' }] : []}>
+            <Select loading={binsLoading} placeholder={binsLoading ? '加载中...' : '请选择卡产品'} allowClear>
               {availableBins.map((bin) => (
                 <Option key={bin.id} value={bin.id}>
-                  {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''}
+                  {bin.productName || `${bin.card_brand || ''} 虚拟卡`}
                 </Option>
               ))}
             </Select>
