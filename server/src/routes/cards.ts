@@ -503,82 +503,48 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     const reqLimit = Number(creditLimit);
     const userId = req.user!.userId;
 
-    // ════ 17 项顺序校验 ════
-
-    // 1. readonly
+    // ════ 灰度校验 ════
     if (isReadonly) {
-      return res.json({ code: 503, message: 'GEO 渠道当前为只读模式，无法开卡', timestamp: Date.now() });
+      return res.json({ code: 503, message: '当前卡产品不可用，请刷新后重试', timestamp: Date.now() });
     }
-    // 2. enableCreateCard
-    if (!isCreateCardEnabled) {
-      return res.json({ code: 503, message: 'GEO 开卡未启用', timestamp: Date.now() });
+    if (!isCreateCardEnabled || !isCanaryEnabled) {
+      return res.json({ code: 503, message: '当前卡产品不可用，请刷新后重试', timestamp: Date.now() });
     }
-    // 3. createCardCanaryEnabled
-    if (!isCanaryEnabled) {
-      return res.json({ code: 503, message: 'GEO 开卡灰度尚未开启', timestamp: Date.now() });
+    if (testUserIds.length === 0 || !testUserIds.includes(userId)) {
+      return res.json({ code: 403, message: '当前卡产品不可用，请刷新后重试', timestamp: Date.now() });
     }
-    // 4. createCardTestUserIds 为空
-    if (testUserIds.length === 0) {
-      return res.json({ code: 503, message: 'GEO 开卡白名单未配置', timestamp: Date.now() });
+    if (allowedBins.length === 0 || !selectedBin.external_bin_id || !allowedBins.includes(selectedBin.external_bin_id)) {
+      return res.json({ code: 403, message: '所选卡产品不可用，请刷新后重试', timestamp: Date.now() });
     }
-    // 5. 当前用户不在白名单
-    if (!testUserIds.includes(userId)) {
-      return res.json({ code: 403, message: '您不在 GEO 开卡灰度白名单中', timestamp: Date.now() });
-    }
-    // 6. allowedBinIds 为空
-    if (allowedBins.length === 0) {
-      return res.json({ code: 503, message: 'GEO 开卡 BIN 白名单未配置', timestamp: Date.now() });
-    }
-    // 7. BIN 不在白名单
-    if (!selectedBin.external_bin_id || !allowedBins.includes(selectedBin.external_bin_id)) {
-      return res.json({ code: 403, message: '所选 BIN 不在 GEO 开卡白名单中', timestamp: Date.now() });
-    }
-    // 8. channel_code 非 GEO
-    if (selectedBin.channel_code !== 'GEO') {
-      return res.json({ code: 400, message: '所选 BIN 不属于 GEO 渠道', timestamp: Date.now() });
-    }
-    // 9. 非 SINGLE 模式
-    if (selectedBin.mode_type && selectedBin.mode_type !== 'SINGLE') {
-      return res.json({ code: 400, message: 'GEO 仅支持 SINGLE 独立额度卡', timestamp: Date.now() });
-    }
-    // 10. external_bin_id 为空（二次确认）
     if (!selectedBin.external_bin_id) {
-      return res.json({ code: 400, message: '所选 BIN 无 external_bin_id', timestamp: Date.now() });
+      return res.json({ code: 400, message: '所选卡产品不可用，请刷新后重试', timestamp: Date.now() });
     }
-    // 11. cardLimit 非数字
-    if (isNaN(reqLimit)) {
-      return res.json({ code: 400, message: '额度必须为数字', timestamp: Date.now() });
-    }
-    // 12. cardLimit <= 0
-    if (reqLimit <= 0) {
+    if (isNaN(reqLimit) || reqLimit <= 0) {
       return res.json({ code: 400, message: '额度必须大于 0', timestamp: Date.now() });
     }
-    // 13. maxCardLimit <= 0
     if (maxLimit <= 0) {
-      return res.json({ code: 503, message: 'GEO 开卡额度上限配置异常', timestamp: Date.now() });
+      return res.json({ code: 503, message: '当前卡产品不可用，请刷新后重试', timestamp: Date.now() });
     }
-    // 14. cardLimit > maxCardLimit
     if (reqLimit > maxLimit) {
-      return res.json({ code: 400, message: `GEO 开卡额度不能超过 $${maxLimit}`, timestamp: Date.now() });
+      return res.json({ code: 400, message: `开卡额度不能超过 $${maxLimit}`, timestamp: Date.now() });
     }
 
-    // 15. 每日创建限制
+    // 每日创建限制
     const todayStr = new Date().toISOString().slice(0, 10);
     const todayCount = db.prepare(
       "SELECT COUNT(*) as c FROM cards WHERE channel_code='GEO' AND user_id=? AND date(created_at)=?"
     ).get(userId, todayStr) as any;
     if (todayCount && todayCount.c >= dailyLimit) {
-      return res.json({ code: 429, message: `今日 GEO 开卡已达上限（${dailyLimit}张）`, timestamp: Date.now() });
+      return res.json({ code: 429, message: `今日开卡已达上限（${dailyLimit}张）`, timestamp: Date.now() });
     }
 
-    // 16. 并发锁
+    // 并发锁
     if (geoCreateLocks.get(userId)) {
-      return res.json({ code: 429, message: '您有 GEO 开卡请求正在处理中，请稍后重试', timestamp: Date.now() });
+      return res.json({ code: 429, message: '您有开卡请求正在处理中，请稍后重试', timestamp: Date.now() });
     }
     geoCreateLocks.set(userId, true);
 
     // ── 获取 GEO provider_cardholder_id ──
-    // 优先使用 cardholder_channel_accounts 表
     let geoCardUserId = '';
     const geoHolder = db.prepare(`
       SELECT provider_cardholder_id, sync_status
@@ -589,24 +555,22 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     if (geoHolder?.provider_cardholder_id) {
       geoCardUserId = geoHolder.provider_cardholder_id;
     } else {
-      // fallback: 读取 config_json.geoCardUserIds 旧表
       const geoCardUserIdMap = geoConfig.geoCardUserIds || {};
       geoCardUserId = geoCardUserIdMap[String(userId)] || '';
     }
 
-    // cardUserId 为空则直接拒绝，不调用 GEO API
     if (!geoCardUserId || !String(geoCardUserId).trim()) {
       geoCreateLocks.delete(userId);
-      return res.json({ code: 400, message: 'GEO 持卡人未创建，请先创建持卡人', timestamp: Date.now() });
+      return res.json({ code: 400, message: '当前持卡人资料暂不可用于该卡产品，请更换持卡人或联系平台客服', timestamp: Date.now() });
     }
 
-    // 17. 一个 cardUserId 最多 5 张卡
+    // 一个 cardUserId 最多 5 张卡
     const geoCardCount = db.prepare(
       "SELECT COUNT(*) as c FROM cards WHERE user_id=? AND channel_code='GEO' AND status IN (0,1,2)"
     ).get(userId) as any;
     if (geoCardCount && geoCardCount.c >= 5) {
       geoCreateLocks.delete(userId);
-      return res.json({ code: 429, message: '每个 GEO 持卡人最多开通 5 张卡（当前已满）', timestamp: Date.now() });
+      return res.json({ code: 429, message: '每个持卡人最多开通 5 张卡（当前已满）', timestamp: Date.now() });
     }
 
     try {
@@ -623,26 +587,22 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
 
       // ── 安全落库 ──
       externalId = geoCard.cardId || '';
-      // cardNo 只取 last4 脱敏
       const geoLast4 = geoCard.cardNo ? geoCard.cardNo.slice(-4) : '';
-      masked = geoLast4 ? `****${geoLast4}` : `****${externalId.slice(-4)}`;
-      cardNo = '';             // 完整 cardNo 不落库
-      cvv = '';             // cardVerifyNo/CVV 不落库
-      expireDate = geoCard.cardExpiryDate
-        ? geoCard.cardExpiryDate.slice(0, 7)
-        : generateExpireDate();
+      masked = geoLast4 ? `**** **** **** ${geoLast4}` : `**** **** **** ${externalId.slice(-4)}`;
+      cardNo = '';
+      cvv = '';
+      expireDate = geoCard.cardExpiryDate ? geoCard.cardExpiryDate.slice(0, 7) : '待生成';
       effectiveInitialBalance = 0;
 
-      console.log('[GEO] 开卡成功:', externalId, masked, 'expire:', expireDate);
+      console.log('[GEO] 开卡成功: cardIdLast4=' + (externalId.slice(-4)) + ' masked=' + masked + ' expire=' + expireDate);
     } catch (err: any) {
       console.error('[GEO] 开卡失败:', err.message);
       return res.json({
         code: 500,
-        message: 'GEO 开卡失败: ' + err.message,
+        message: '开卡失败，请稍后重试或联系平台客服',
         timestamp: Date.now()
       });
     } finally {
-      // 不论成功失败都释放并发锁
       geoCreateLocks.delete(userId);
     }
 
