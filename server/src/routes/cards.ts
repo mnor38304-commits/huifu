@@ -262,10 +262,20 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
 // ── 创建卡片 ────────────────────────────────────────────────────────────────
 
 router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
-  const { cardName, cardType, creditLimit, singleLimit, dailyLimit, purpose, binId } = req.body;
+  const { cardName, cardType, creditLimit, singleLimit, dailyLimit, purpose, binId, profileId } = req.body;
 
   if (!cardName || !cardType || !creditLimit) {
     return res.json({ code: 400, message: '请填写完整信息', timestamp: Date.now() });
+  }
+
+  // 校验 profileId
+  if (!profileId) {
+    return res.json({ code: 400, message: '请选择持卡人', timestamp: Date.now() });
+  }
+  const profile = db.prepare("SELECT id FROM user_cardholder_profiles WHERE id=? AND user_id=? AND status='ACTIVE'")
+    .get(profileId, req.user!.userId) as any;
+  if (!profile) {
+    return res.json({ code: 400, message: '持卡人不存在或不可用', timestamp: Date.now() });
   }
 
   if (creditLimit < 10 || creditLimit > 10000) {
@@ -321,9 +331,9 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       const holder = db.prepare(`
         SELECT provider_cardholder_id, sync_status
         FROM cardholder_channel_accounts
-        WHERE user_id = ? AND channel_code = 'UQPAY' AND sync_status = 'success'
+        WHERE user_id = ? AND channel_code = 'UQPAY' AND profile_id = ? AND sync_status = 'success'
         ORDER BY id DESC LIMIT 1
-      `).get(req.user!.userId) as any;
+      `).get(req.user!.userId, profileId) as any;
 
       if (!holder || !holder.provider_cardholder_id) {
         console.log('[UQPay] 商户无持卡人: userId=' + req.user!.userId);
@@ -529,9 +539,9 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     const geoHolder = db.prepare(`
       SELECT provider_cardholder_id, sync_status
       FROM cardholder_channel_accounts
-      WHERE user_id = ? AND channel_code = 'GEO' AND sync_status = 'success'
+      WHERE user_id = ? AND channel_code = 'GEO' AND profile_id = ? AND sync_status = 'success'
       ORDER BY id DESC LIMIT 1
-    `).get(userId) as any;
+    `).get(userId, profileId) as any;
     if (geoHolder?.provider_cardholder_id) {
       geoCardUserId = geoHolder.provider_cardholder_id;
     } else {
