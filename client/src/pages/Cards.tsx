@@ -7,7 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import {
   getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard,
-  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry,
+  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry, renewCard,
   getMyCardholderProfiles
 } from '../services/api'
 import CardDetailModal from '../components/CardDetailModal'
@@ -97,6 +97,7 @@ const Cards: React.FC = () => {
 
   const openCreateModal = async () => {
     form.resetFields()
+    form.setFieldsValue({ validityMonths: 1 })
     setCreateModalVisible(true)
     await Promise.all([loadBins(), loadCardholders()])
   }
@@ -218,13 +219,46 @@ const Cards: React.FC = () => {
     }
   }
 
-  // ── 使用到期时间弹窗 ──
+  // ── 使用到期时间弹窗 + 续期解冻 ──
   const [expiryModalVisible, setExpiryModalVisible] = useState(false)
   const [expiryCardId, setExpiryCardId] = useState<number | null>(null)
   const [expiryCardName, setExpiryCardName] = useState('')
   const [expiryPreset, setExpiryPreset] = useState('1m')
   const [isUsageExpiredFrozen, setIsUsageExpiredFrozen] = useState(false)
   const [expirySubmitting, setExpirySubmitting] = useState(false)
+
+  // 续期解冻弹窗
+  const [renewModalVisible, setRenewModalVisible] = useState(false)
+  const [renewCardId, setRenewCardId] = useState<number | null>(null)
+  const [renewCardName, setRenewCardName] = useState('')
+  const [renewMonths, setRenewMonths] = useState(1)
+  const [renewLoading, setRenewLoading] = useState(false)
+
+  const openRenewModal = (record: any) => {
+    setRenewCardId(record.id)
+    setRenewCardName(record.card_name || record.card_no_masked)
+    setRenewMonths(1)
+    setRenewModalVisible(true)
+  }
+
+  const handleRenew = async () => {
+    if (!renewCardId || !renewMonths) return
+    setRenewLoading(true)
+    try {
+      const res = await renewCard(renewCardId, renewMonths)
+      if (res.code === 0) {
+        message.success(`卡片已续期 ${renewMonths} 个月`)
+        setRenewModalVisible(false)
+        loadCards()
+      } else {
+        message.error(res.message)
+      }
+    } catch {
+      message.error('续期失败，请稍后重试')
+    } finally {
+      setRenewLoading(false)
+    }
+  }
 
   const openExpiryModal = (record: any) => {
     setExpiryCardId(record.id)
@@ -403,7 +437,12 @@ const Cards: React.FC = () => {
               <LockOutlined /> 冻结
             </Button>
           )}
-          {record.status === 2 && (
+          {record.status === 2 && record.auto_frozen_reason === 'USAGE_EXPIRED' && (
+            <Button type="link" size="small" icon={<ClockCircleOutlined />} style={{ color: '#1677ff' }} onClick={() => openRenewModal(record)}>
+              续期解冻
+            </Button>
+          )}
+          {record.status === 2 && !record.auto_frozen_reason && (
             <Button type="link" size="small" onClick={() => handleFreeze(record.id, false)}>
               <UnlockOutlined /> 解冻
             </Button>
@@ -538,6 +577,14 @@ const Cards: React.FC = () => {
             <Input placeholder="例如：广告投放、平台入驻" />
           </Form.Item>
 
+          <Form.Item name="validityMonths" label="使用期" rules={[{ required: true, message: '请选择使用期' }]} initialValue={1}>
+            <Select>
+              <Option value={1}>月卡（1个月）</Option>
+              <Option value={3}>季卡（3个月）</Option>
+              <Option value={12}>年卡（12个月）</Option>
+            </Select>
+          </Form.Item>
+
           <Form.Item shouldUpdate>
             {() => (
               <Button type="primary" htmlType="submit" loading={creating} block
@@ -591,6 +638,20 @@ const Cards: React.FC = () => {
           <Radio.Button value="3m">3个月</Radio.Button>
           <Radio.Button value="6m">6个月</Radio.Button>
           <Radio.Button value="1y">1年</Radio.Button>
+        </Radio.Group>
+      </Modal>
+
+      {/* ── 续期解冻弹窗 ── */}
+      <Modal title="续期解冻" open={renewModalVisible} onCancel={() => setRenewModalVisible(false)}
+        onOk={handleRenew} confirmLoading={renewLoading} okText="确认续期" cancelText="取消" destroyOnClose>
+        <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+          卡片: <strong>{renewCardName}</strong>（使用期已到期）
+        </div>
+        <div style={{ marginBottom: 12 }}>选择续期时长：</div>
+        <Radio.Group value={renewMonths} onChange={e => setRenewMonths(e.target.value)}>
+          <Radio.Button value={1}>1个月</Radio.Button>
+          <Radio.Button value={3}>3个月</Radio.Button>
+          <Radio.Button value={12}>12个月</Radio.Button>
         </Radio.Group>
       </Modal>
     </div>

@@ -177,6 +177,10 @@ async function start() {
   `).run(); } catch (_) {}
   try { db.prepare("ALTER TABLE cardholder_channel_accounts ADD COLUMN provider_payload_json TEXT").run(); } catch (_) {}
   try { db.prepare("ALTER TABLE user_cardholder_profiles ADD COLUMN address_line2 TEXT").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE cards ADD COLUMN validity_months INTEGER DEFAULT 1").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE cards ADD COLUMN freeze_reason TEXT").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE cards ADD COLUMN frozen_at DATETIME").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE cards ADD COLUMN unfrozen_at DATETIME").run(); } catch (_) {}
   try { db.prepare(`
     CREATE INDEX IF NOT EXISTS idx_chan_acc_user_channel ON cardholder_channel_accounts(user_id, channel_code)
   `).run(); } catch (_) {}

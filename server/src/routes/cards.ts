@@ -262,7 +262,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
 // ── 创建卡片 ────────────────────────────────────────────────────────────────
 
 router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
-  const { cardName, cardType, creditLimit, singleLimit, dailyLimit, purpose, binId, profileId } = req.body;
+  const { cardName, cardType, creditLimit, singleLimit, dailyLimit, purpose, binId, profileId, validityMonths } = req.body;
 
   if (!cardName || !cardType || !creditLimit) {
     return res.json({ code: 400, message: '请填写完整信息', timestamp: Date.now() });
@@ -277,6 +277,15 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   if (!profile) {
     return res.json({ code: 400, message: '持卡人不存在或不可用', timestamp: Date.now() });
   }
+
+  // 使用期：默认 1 个月，支持 1/3/12
+  const vm = Number(validityMonths) || 1;
+  if (![1, 3, 12].includes(vm)) {
+    return res.json({ code: 400, message: '使用期仅支持 1/3/12 个月', timestamp: Date.now() });
+  }
+  const usageExpiresAt = new Date();
+  usageExpiresAt.setMonth(usageExpiresAt.getMonth() + vm);
+  const usageExpiresAtStr = usageExpiresAt.toISOString().replace('T', ' ').slice(0, 19);
 
   if (creditLimit < 10 || creditLimit > 10000) {
     return res.json({ code: 400, message: '额度范围: $10 - $10,000', timestamp: Date.now() });
@@ -617,16 +626,12 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   const insertStatus = (channel.type === 'uqpay' && uqpayCardResult?.card_status &&
     ['PENDING', 'PROCESSING'].includes(uqpayCardResult.card_status.toUpperCase())) ? 0 : 1;
 
-  // 新卡默认使用期限：1个月
-  const defaultUsageExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    .toISOString().replace('T', ' ').slice(0, 19);
-
   const result = db.prepare(`
     INSERT INTO cards (card_no, card_no_masked, user_id, bin_id, card_name, card_type,
       currency, balance, credit_limit, single_limit, daily_limit, status, expire_date,
       cvv, purpose, external_id, channel_code, uqpay_cardholder_id, card_order_id,
-      usage_expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      usage_expires_at, remark, validity_months)
+    VALUES (?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cardNo,
     masked,
@@ -646,7 +651,9 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     channelCode,
     uqpayCardholderId,
     uqpayCardResult?.card_order_id || null,
-    defaultUsageExpiresAt
+    usageExpiresAtStr,
+    cardName,    // remark = cardName
+    vm           // validity_months
   );
 
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(req.user!.userId) as any;
@@ -1320,28 +1327,33 @@ router.post('/:id/freeze', authMiddleware, async (req: AuthRequest, res: Respons
       try {
         await channel.sdk.freezeCard(card.external_id);
       } catch (err: any) {
-        return res.json({ code: 500, message: 'UQPay 冻结失败: ' + err.message, timestamp: Date.now() });
+        return res.json({ code: 500, message: '冻结失败，请稍后重试', timestamp: Date.now() });
       }
     } else if (channel.type === 'dogpay' && (channel.sdk as any)?.freezeCard) {
       try {
         await (channel.sdk as any).freezeCard(card.external_id);
       } catch (err: any) {
-        return res.json({ code: 500, message: '渠道冻结失败: ' + err.message, timestamp: Date.now() });
+        return res.json({ code: 500, message: '冻结失败，请稍后重试', timestamp: Date.now() });
       }
     }
   }
 
-  db.prepare('UPDATE cards SET status = 2, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+  db.prepare('UPDATE cards SET status = 2, freeze_reason = ?, frozen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('MANUAL', req.params.id);
   res.json({ code: 0, message: '卡片已冻结', timestamp: Date.now() });
 });
 
-// ── 解冻卡片 ────────────────────────────────────────────────────────────────
+// ── 解冻卡片（仅常规冻结可解冻，使用期到期冻结需走续期接口） ──────────
 
 router.post('/:id/unfreeze', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
 
   if (!card) {
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  // 使用期到期冻结不能直接解冻，需走续期接口
+  if (card.freeze_reason === 'USAGE_EXPIRED' || card.auto_frozen_reason === 'USAGE_EXPIRED') {
+    return res.json({ code: 400, message: '当前卡片已到期，请使用续期解冻功能', timestamp: Date.now() });
   }
 
   if (card.external_id) {
@@ -1351,19 +1363,64 @@ router.post('/:id/unfreeze', authMiddleware, async (req: AuthRequest, res: Respo
       try {
         await channel.sdk.unfreezeCard(card.external_id);
       } catch (err: any) {
-        return res.json({ code: 500, message: 'UQPay 解冻失败: ' + err.message, timestamp: Date.now() });
+        return res.json({ code: 500, message: '渠道解冻失败', timestamp: Date.now() });
       }
     } else if (channel.type === 'dogpay' && (channel.sdk as any)?.unfreezeCard) {
       try {
         await (channel.sdk as any).unfreezeCard(card.external_id);
       } catch (err: any) {
-        return res.json({ code: 500, message: '渠道解冻失败: ' + err.message, timestamp: Date.now() });
+        return res.json({ code: 500, message: '渠道解冻失败', timestamp: Date.now() });
       }
     }
   }
 
-  db.prepare('UPDATE cards SET status = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+  db.prepare("UPDATE cards SET status = 1, freeze_reason = NULL, frozen_at = NULL, unfrozen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
   res.json({ code: 0, message: '卡片已解冻', timestamp: Date.now() });
+});
+
+// ── 续期解冻（使用期到期卡专用） ──────────────────────────────────────
+
+router.post('/:id/renew', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, req.user!.userId) as any;
+
+  if (!card) {
+    return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  }
+
+  // 仅使用期到期冻结可以续期
+  const isExpired = card.freeze_reason === 'USAGE_EXPIRED' || card.auto_frozen_reason === 'USAGE_EXPIRED';
+  if (!isExpired) {
+    return res.json({ code: 400, message: '当前卡片不可自助续期解冻，请联系平台客服', timestamp: Date.now() });
+  }
+
+  const months = Number(req.body.months) || 1;
+  if (![1, 3, 12, 99].includes(months) && months <= 0) {
+    return res.json({ code: 400, message: '续期时长仅支持 1/3/12 个月', timestamp: Date.now() });
+  }
+
+  // 计算新使用期
+  const now = new Date();
+  const oldExpiry = card.usage_expires_at ? new Date(card.usage_expires_at) : now;
+  const newExpiry = oldExpiry > now ? oldExpiry : now;
+  newExpiry.setMonth(newExpiry.getMonth() + months);
+  const newExpiryStr = newExpiry.toISOString().replace('T', ' ').slice(0, 19);
+
+  // 调渠道解冻
+  if (card.external_id) {
+    const channel = await getChannelSDK();
+    if (channel.type === 'uqpay' && channel.sdk) {
+      await channel.sdk.unfreezeCard(card.external_id);
+    }
+  }
+
+  db.prepare(`
+    UPDATE cards SET status = 1, freeze_reason = NULL, auto_frozen_reason = NULL,
+      auto_frozen_at = NULL, frozen_at = NULL, unfrozen_at = CURRENT_TIMESTAMP,
+      usage_expires_at = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(newExpiryStr, req.params.id);
+
+  res.json({ code: 0, message: '卡片已续期解冻', data: { newUsageExpiresAt: newExpiryStr }, timestamp: Date.now() });
 });
 
 // ── 注销卡片 ────────────────────────────────────────────────────────────────

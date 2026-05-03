@@ -149,4 +149,7 @@ export const syncMyCardholder = (profileId: number) => api.post(`/cardholders/${
 export const getMyCardholderDetail = (id: number) => api.get(`/cardholders/${id}`)
 export const updateProfileEmail = (id: number, email: string) => api.patch(`/cardholders/${id}/email`, { email })
 
+// ── 续期解冻 ──────────────────────────────────────────────────────────
+export const renewCard = (cardId: number, months: number) => api.post(`/cards/${cardId}/renew`, { months })
+
 export default api
