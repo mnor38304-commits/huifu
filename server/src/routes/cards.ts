@@ -177,7 +177,13 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
     let bins = getMerchantOpenableBins(req.user!.userId);
 
     if (channel.type !== 'mock') {
-      // 渠道模式: 只显示已分配 external_bin_id 的卡段
+      // 只显示当前活动渠道的 BIN（多渠道混合会导致选错开错）
+      const activeCC = channel.type === 'uqpay' ? 'UQPAY' : channel.type === 'geo' ? 'GEO' : 'DOGPAY';
+      bins = bins.filter((bin: any) => {
+        const bc = String(bin.channel_code || '').toUpperCase();
+        return bc === activeCC;
+      });
+      // 同时过滤有 external_bin_id 的
       bins = bins.filter((bin: any) => !!bin.external_bin_id);
     }
 
@@ -306,21 +312,38 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   let allowedBins = getMerchantOpenableBins(req.user!.userId);
 
   if (channel.type !== 'mock') {
+    // 只保留当前活动渠道的 BIN
+    const activeCC = channel.type === 'uqpay' ? 'UQPAY' : channel.type === 'geo' ? 'GEO' : 'DOGPAY';
+    allowedBins = allowedBins.filter((bin: any) => {
+      const bc = String(bin.channel_code || '').toUpperCase();
+      return bc === activeCC;
+    });
     allowedBins = allowedBins.filter((bin: any) => !!bin.external_bin_id);
-    channelCode = channel.type === 'uqpay' ? 'UQPAY' : channel.type === 'geo' ? 'GEO' : 'DOGPAY';
+    channelCode = activeCC;
   }
 
-  const selectedBin = binId
-    ? allowedBins.find((bin: any) => Number(bin.id) === Number(binId))
-    : allowedBins[0];
+  // 严格根据前端传入的 binId 查找，禁止 fallback 到 allowedBins[0]
+  if (!binId) {
+    return res.json({ code: 400, message: '请选择卡产品', timestamp: Date.now() });
+  }
+
+  const selectedBin = allowedBins.find((bin: any) => Number(bin.id) === Number(binId));
 
   if (allowedBins.length === 0) {
     return res.json({ code: 400, message: '当前商户未配置可开通卡段，请联系管理员', timestamp: Date.now() });
   }
 
   if (!selectedBin) {
-    return res.json({ code: 400, message: '所选卡段未开通或不可用', timestamp: Date.now() });
+    return res.json({ code: 400, message: '所选卡产品不可用，请刷新后重试', timestamp: Date.now() });
   }
+
+  // 一致性校验
+  if (Number(selectedBin.id) !== Number(binId)) {
+    console.error('[Card] BIN 不一致: requested=' + binId + ' resolved=' + selectedBin.id);
+    return res.json({ code: 500, message: '所选卡产品不可用，请刷新后重试', timestamp: Date.now() });
+  }
+
+  console.log('[Card] 开卡: userId=' + req.user!.userId + ' binId=' + binId + ' binCode=' + selectedBin.bin_code + ' channel=' + channelCode);
 
   selectedBinId = Number(selectedBin.id);
 
