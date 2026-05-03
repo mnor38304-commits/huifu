@@ -320,7 +320,7 @@ const Cards: React.FC = () => {
   }
 
   const statusMap: Record<number, { text: string; color: string }> = {
-    0: { text: '待激活', color: 'default' },
+    0: { text: '处理中', color: 'processing' },
     1: { text: '正常', color: 'green' },
     2: { text: '冻结', color: 'orange' },
     3: { text: '已过期', color: 'red' },

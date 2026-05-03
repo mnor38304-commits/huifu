@@ -393,14 +393,23 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       });
 
       externalId = cardResult.card_id;
-      masked = cardResult.last4 ? `****${cardResult.last4}` : `****${cardResult.card_id.slice(-4)}`;
-          // UQPay 真实卡号通过 Secure iFrame 展示（PCI DSS 合规），不在 API 直接返回
-      // 前端通过 POST /api/v1/cards/{id}/pan-token 获取 iframeUrl
-      cardNo = '';
-      cvv = '[查看卡号 → Secure iFrame]';
-      expireDate = cardResult.expiryYear && cardResult.expiryMonth
-        ? `${cardResult.expiryYear}/${cardResult.expiryMonth}`
-        : generateExpireDate();
+      // PENDING 状态无卡号信息
+      if (cardResult.card_status && ['PENDING', 'PROCESSING'].includes(cardResult.card_status.toUpperCase())) {
+        masked = '卡号待生成';
+        cardNo = '';
+        cvv = '***';
+        expireDate = '待生成';
+      } else {
+        masked = cardResult.last4
+          ? `**** **** **** ${cardResult.last4}`
+          : `**** **** **** ${cardResult.card_id.slice(-4)}`;
+        // UQPay 真实卡号通过 Secure iFrame 展示（PCI DSS 合规），不在 API 直接返回
+        cardNo = '';
+        cvv = '***';
+        expireDate = cardResult.expiryYear && cardResult.expiryMonth
+          ? `${cardResult.expiryYear}-${cardResult.expiryMonth.padStart(2, '0')}`
+          : '待生成';
+      }
 
       console.log('[UQPay] 开卡成功:', externalId, masked);
 
@@ -431,13 +440,13 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
     } catch (err: any) {
       const msg = err.message || '';
       console.error('[UQPay] 开卡失败:', msg.slice(0, 200));
-      // 友好错误映射
+      // 友好错误映射（中性，不暴露渠道）
       if (msg.includes('cardholder_not_found') || msg.includes('cardholder not found')) {
-        return res.json({ code: 400, message: '当前 UQPay 持卡人已失效，请重新创建持卡人', timestamp: Date.now() });
+        return res.json({ code: 400, message: '持卡人已失效，请重新创建持卡人', timestamp: Date.now() });
       }
       return res.json({
         code: 500,
-        message: 'UQPay 开卡失败: ' + msg,
+        message: '开卡失败，请稍后重试',
         timestamp: Date.now()
       });
     }
