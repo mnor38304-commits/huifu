@@ -181,6 +181,8 @@ async function start() {
   try { db.prepare("ALTER TABLE cards ADD COLUMN freeze_reason TEXT").run(); } catch (_) {}
   try { db.prepare("ALTER TABLE cards ADD COLUMN frozen_at DATETIME").run(); } catch (_) {}
   try { db.prepare("ALTER TABLE cards ADD COLUMN unfrozen_at DATETIME").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE card_bins ADD COLUMN min_card_limit REAL DEFAULT 5").run(); } catch (_) {}
+  try { db.prepare("ALTER TABLE card_bins ADD COLUMN max_card_limit REAL DEFAULT 10000").run(); } catch (_) {}
   try { db.prepare(`
     CREATE INDEX IF NOT EXISTS idx_chan_acc_user_channel ON cardholder_channel_accounts(user_id, channel_code)
   `).run(); } catch (_) {}

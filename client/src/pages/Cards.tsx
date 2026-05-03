@@ -587,11 +587,21 @@ const Cards: React.FC = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item name="creditLimit" label="信用额度 (USD)" rules={[
-            { required: true, message: '请输入信用额度' },
-            { type: 'number', min: 10, message: '信用额度最低为 10 USD' }
-          ]}>
-            <InputNumber min={10} max={10000} style={{ width: '100%' }} placeholder="最低 10 USD" />
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.binId !== cur.binId}>
+            {({ getFieldValue }) => {
+              const selectedBinId = getFieldValue('binId')
+              const bin = availableBins.find(b => b.id === selectedBinId)
+              const minL = bin?.minCreditLimit || 5
+              const maxL = bin?.maxCreditLimit || 10000
+              return (
+                <Form.Item name="creditLimit" label="信用额度 (USD)" rules={[
+                  { required: true, message: '请输入信用额度' },
+                  { type: 'number', min: minL, max: maxL, message: `信用额度范围: $${minL} - $${maxL} USD` }
+                ]}>
+                  <InputNumber min={minL} max={maxL} style={{ width: '100%' }} placeholder={`${minL} - ${maxL} USD`} />
+                </Form.Item>
+              )
+            }}
           </Form.Item>
 
           <Form.Item name="singleLimit" label="单笔限额 (USD)">

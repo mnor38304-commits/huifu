@@ -197,6 +197,8 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
       open_fee: bin.open_fee,
       topup_fee_rate: bin.topup_fee_rate,
       monthly_fee: bin.monthly_fee,
+      minCreditLimit: Number(bin.min_card_limit) || 5,
+      maxCreditLimit: Number(bin.max_card_limit) || 10000,
     }));
 
     return res.json({ code: 0, message: 'success', data: sanitized, timestamp: Date.now() });
@@ -269,7 +271,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
 router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
   const { cardName, cardType, creditLimit, singleLimit, dailyLimit, purpose, binId, profileId, validityMonths } = req.body;
 
-  if (!cardName || !cardType || !creditLimit) {
+  if (!cardName || !cardType || creditLimit == null) {
     return res.json({ code: 400, message: '请填写完整信息', timestamp: Date.now() });
   }
 
@@ -291,10 +293,6 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   const usageExpiresAt = new Date();
   usageExpiresAt.setMonth(usageExpiresAt.getMonth() + vm);
   const usageExpiresAtStr = usageExpiresAt.toISOString().replace('T', ' ').slice(0, 19);
-
-  if (creditLimit < 10 || creditLimit > 10000) {
-    return res.json({ code: 400, message: '额度范围: $10 - $10,000', timestamp: Date.now() });
-  }
 
   let cardNo = '';
   let masked = '';
@@ -345,6 +343,13 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   console.log('[Card] 开卡: userId=' + req.user!.userId + ' binId=' + binId + ' binCode=' + selectedBin.bin_code + ' channel=' + channelCode);
 
   selectedBinId = Number(selectedBin.id);
+
+  // 动态校验信用额度范围：按卡产品配置读取
+  const minLimit = Number(selectedBin.min_card_limit) || 5;
+  const maxLimit = Number(selectedBin.max_card_limit) || 10000;
+  if (creditLimit < minLimit || creditLimit > maxLimit) {
+    return res.json({ code: 400, message: `信用额度范围: $${minLimit} - $${maxLimit} USD`, timestamp: Date.now() });
+  }
 
   // ── 渠道开卡 ──────────────────────────────────────────────────────────
 
