@@ -135,4 +135,8 @@ export const getRecentTransactions = (params: any) => api.get('/dashboard/recent
 export const updateCardholderEmail = (cardId: number, email: string) =>
   api.patch(`/cards/${cardId}/cardholder-email`, { email })
 
+// ── 商户端持卡人（开卡用） ─────────────────────────────────────────────
+export const getMyCardholders = (channelCode: string) =>
+  api.get(`/cardholders?channelCode=${channelCode}`)
+
 export default api

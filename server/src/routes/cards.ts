@@ -188,6 +188,32 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
   }
 });
 
+// ── 商户端获取持卡人列表（必须在 :id 路由之前注册） ─────────────────
+
+router.get('/cardholders', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
+  const { channelCode } = req.query;
+  const cc = String(channelCode || '').toUpperCase();
+
+  if (!cc) {
+    return res.json({ code: 400, message: '请指定渠道', timestamp: Date.now() });
+  }
+
+  const rows = db.prepare(`
+    SELECT id, uqpay_cardholder_id, email
+    FROM uqpay_cardholders
+    WHERE user_id = ? AND (cardholder_status IS NULL OR cardholder_status IN ('SUCCESS','ACTIVE',''))
+    ORDER BY id DESC
+  `).all(req.user!.userId);
+
+  const data = rows.map((r: any) => ({
+    id: r.id,
+    email: r.email,
+    cardholderIdLast4: r.uqpay_cardholder_id ? r.uqpay_cardholder_id.slice(-4) : '',
+  }));
+
+  res.json({ code: 0, message: 'success', data, timestamp: Date.now() });
+});
+
 // ── 我的卡片列表 ────────────────────────────────────────────────────────────
 
 router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
@@ -304,32 +330,29 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
         return res.json({ code: 401, message: '用户不存在', timestamp: Date.now() });
       }
 
-      // 1. 获取或创建持卡人（含本地缓存）
-      const firstName = (user.nickname || user.email || 'User').split(/[@.\s]/)[0] || 'User';
-      const lastName = (user.email || 'User').split(/[@]/)[0] || 'User';
+      // 1. 获取 UQPay 持卡人 — 从 uqpay_cardholders 表查当前商户的持卡人
+      const uqpayHolder = db.prepare(`
+        SELECT uqpay_cardholder_id, email, cardholder_status
+        FROM uqpay_cardholders
+        WHERE user_id = ? AND (cardholder_status IS NULL OR cardholder_status IN ('SUCCESS','ACTIVE',''))
+        ORDER BY id DESC LIMIT 1
+      `).get(req.user!.userId) as any;
 
-      const cardholder = await sdk.getOrCreateCardholder({
-        userId: req.user!.userId,
-        email: user.email,
-        firstName,
-        lastName,
-        countryCode: 'US',
-        phoneNumber: user.phone || '+10000000000',
-        nationality: user.country_code || 'US',
-        database: getDb(),
-      });
+      if (!uqpayHolder || !uqpayHolder.uqpay_cardholder_id) {
+        console.log('[UQPay] 商户无持卡人: userId=' + req.user!.userId);
+        return res.json({ code: 400, message: '请先创建 UQPay 持卡人后再开卡', timestamp: Date.now() });
+      }
 
-      // 持久化本地缓存到磁盘
-      saveDatabase();
-
-      uqpayCardholderId = cardholder.id;
+      const realCardholderId = uqpayHolder.uqpay_cardholder_id;
+      uqpayCardholderId = realCardholderId;
+      console.log('[UQPay] 使用持卡人: userId=' + req.user!.userId + ' cardholderIdLast4=' + realCardholderId.slice(-4));
 
       // 2. 获取卡产品（返回标准化 UqPayCardProduct）
       const cardProduct = await sdk.getCardProductId('USD');
 
       // 3. 创建卡片
       const cardResult = await sdk.createCard({
-        cardholderId: cardholder.id,
+        cardholderId: realCardholderId,
         cardProductId: cardProduct.product_id,
         cardCurrency: 'USD',
         cardLimit: Number(creditLimit),
@@ -377,10 +400,15 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       console.log('[UQPay] 初始 cards.balance 将写入:', effectiveInitialBalance);
 
     } catch (err: any) {
-      console.error('[UQPay] 开卡失败:', err.message);
+      const msg = err.message || '';
+      console.error('[UQPay] 开卡失败:', msg.slice(0, 200));
+      // 友好错误映射
+      if (msg.includes('cardholder_not_found') || msg.includes('cardholder not found')) {
+        return res.json({ code: 400, message: '当前 UQPay 持卡人已失效，请重新创建持卡人', timestamp: Date.now() });
+      }
       return res.json({
         code: 500,
-        message: 'UQPay 开卡失败: ' + err.message,
+        message: 'UQPay 开卡失败: ' + msg,
         timestamp: Date.now()
       });
     }
