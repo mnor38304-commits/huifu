@@ -139,4 +139,10 @@ export const updateCardholderEmail = (cardId: number, email: string) =>
 export const getMyCardholders = (channelCode: string) =>
   api.get(`/cardholders?channelCode=${channelCode}`)
 
+// ── 统一持卡人 ────────────────────────────────────────────────────────
+export const getMyCardholderProfiles = () => api.get('/cardholders')
+export const getMyCardholderCurrent = () => api.get('/cardholders/current')
+export const createMyCardholder = (data: any) => api.post('/cardholders', data)
+export const syncMyCardholder = (profileId: number) => api.post(`/cardholders/${profileId}/sync`)
+
 export default api

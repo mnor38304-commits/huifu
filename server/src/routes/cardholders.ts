@@ -68,6 +68,48 @@ router.get('/', (req: AuthRequest, res: Response<ApiResponse>) => {
   });
 });
 
+// ── 查询当前持卡人同步状态（供开卡弹窗使用） ──────────────────────────
+
+router.get('/current', (req: AuthRequest, res: Response<ApiResponse>) => {
+  const profiles = db.prepare(`
+    SELECT p.* FROM user_cardholder_profiles p
+    WHERE p.user_id = ?
+    ORDER BY p.id DESC LIMIT 1
+  `).get(req.user!.userId) as any;
+
+  if (!profiles) {
+    return res.json({
+      code: 0,
+      message: 'success',
+      data: { profileId: 0, emailMasked: '', channels: [] },
+      timestamp: Date.now(),
+    });
+  }
+
+  const accounts = db.prepare(`
+    SELECT channel_code, provider_cardholder_id, sync_status
+    FROM cardholder_channel_accounts
+    WHERE profile_id = ?
+  `).all(profiles.id) as any[];
+
+  const channels = accounts.map((a: any) => ({
+    channelCode: a.channel_code,
+    syncStatus: a.sync_status,
+    providerCardholderIdLast4: a.provider_cardholder_id ? a.provider_cardholder_id.slice(-4) : '',
+  }));
+
+  res.json({
+    code: 0,
+    message: 'success',
+    data: {
+      profileId: profiles.id,
+      emailMasked: profiles.email ? maskEmail(profiles.email) : '',
+      channels,
+    },
+    timestamp: Date.now(),
+  });
+});
+
 // ── 创建持卡人 ─────────────────────────────────────────────────────────────
 
 router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
