@@ -181,7 +181,20 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
       bins = bins.filter((bin: any) => !!bin.external_bin_id);
     }
 
-    return res.json({ code: 0, message: 'success', data: bins, timestamp: Date.now() });
+    // 脱敏：移除商户端不应看到的字段
+    const sanitized = bins.map((bin: any) => ({
+      id: bin.id,
+      bin_code: bin.bin_code,
+      bin_name: bin.bin_name,
+      card_brand: bin.card_brand,
+      currency: bin.currency,
+      country: bin.country,
+      open_fee: bin.open_fee,
+      topup_fee_rate: bin.topup_fee_rate,
+      monthly_fee: bin.monthly_fee,
+    }));
+
+    return res.json({ code: 0, message: 'success', data: sanitized, timestamp: Date.now() });
   } catch (err: any) {
     console.error('Available bins error:', err.message);
     return res.json({ code: 500, message: err.message, timestamp: Date.now() });

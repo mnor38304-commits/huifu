@@ -26,14 +26,12 @@ const Cards: React.FC = () => {
 
   // ── 持卡人状态 ──
   const [cardholderProfile, setCardholderProfile] = useState<any>(null)
-  const [cardholderChannels, setCardholderChannels] = useState<any[]>([])
   const [cardholderLoading, setCardholderLoading] = useState(false)
 
   // ── 创建持卡人 ──
   const [chModalVisible, setChModalVisible] = useState(false)
   const [chForm] = Form.useForm()
   const [chCreating, setChCreating] = useState(false)
-  const [chGeoCountry, setChGeoCountry] = useState('USA')
 
   // ── 重试同步 ──
   const [chSyncing, setChSyncing] = useState(false)
@@ -63,10 +61,8 @@ const Cards: React.FC = () => {
         const d = res.data
         if (d?.profileId && d?.profileId > 0) {
           setCardholderProfile(d)
-          setCardholderChannels(d.channels || [])
         } else {
           setCardholderProfile(null)
-          setCardholderChannels([])
         }
       }
     } catch { /* ignore */ }
@@ -125,15 +121,10 @@ const Cards: React.FC = () => {
   }
 
   const handleCreate = async (values: any) => {
-    // 检查对应渠道是否已同步
-    const selectedBin = availableBins.find(b => b.id === values.binId)
-    const channelCode = selectedBin?.channel_code?.toUpperCase()
-    if (channelCode) {
-      const ch = getChannelSyncStatus(channelCode)
-      if (!ch || ch.syncStatus !== 'success') {
-        message.warning(`请先同步 ${channelCode} 持卡人后再开卡`)
-        return
-      }
+    // 检查持卡人资料是否已完成
+    if (!cardholderProfile?.profileReady) {
+      message.warning('请先完善持卡人资料后再开卡')
+      return
     }
 
     setCreating(true)
@@ -317,8 +308,7 @@ const Cards: React.FC = () => {
   // ── 创建持卡人 ──
   const openChModal = () => {
     chForm.resetFields()
-    chForm.setFieldsValue({ geoCountryCode: 'USA' })
-    setChGeoCountry('USA')
+    chForm.setFieldsValue({ countryCode: 'USA' })
     setChModalVisible(true)
   }
 
@@ -546,18 +536,15 @@ const Cards: React.FC = () => {
                 <span style={{ fontWeight: 500 }}>持卡人邮箱：</span>
                 <span>{cardholderProfile.emailMasked || '-'}</span>
               </Col>
-              {cardholderChannels.map(ch => (
-                <Col key={ch.channelCode}>
-                  <Tag color={ch.syncStatus === 'success' ? 'green' : ch.syncStatus === 'failed' ? 'red' : 'orange'}>
-                    {ch.channelCode}：{ch.syncStatus === 'success' ? '已同步' : ch.syncStatus === 'failed' ? '失败' : '未同步'}
-                    {ch.syncStatus === 'success' && ch.providerCardholderIdLast4 && ` (****${ch.providerCardholderIdLast4})`}
-                  </Tag>
-                </Col>
-              ))}
-              {cardholderChannels.some(c => c.syncStatus !== 'success') && (
+              <Col>
+                <Tag color={cardholderProfile.profileReady ? 'green' : 'orange'}>
+                  持卡人资料：{cardholderProfile.profileReady ? '已完成' : '待完善'}
+                </Tag>
+              </Col>
+              {!cardholderProfile.profileReady && (
                 <Col>
                   <Button size="small" icon={<SyncOutlined />} loading={chSyncing} onClick={handleChSync}>
-                    重试同步
+                    重试
                   </Button>
                 </Col>
               )}
@@ -627,21 +614,15 @@ const Cards: React.FC = () => {
           {createModalVisible && (
             <Form.Item shouldUpdate={(prev, cur) => prev.binId !== cur.binId}>
               {({ getFieldValue }) => {
-                const binId = getFieldValue('binId')
-                const bin = availableBins.find(b => b.id === binId)
-                const cc = bin?.channel_code?.toUpperCase()
-                const ch = cardholderChannels.find(c => c.channelCode === cc)
-                const syncOk = cc ? (ch?.syncStatus === 'success') : true
+                const syncOk = !!cardholderProfile?.profileReady
                 return (
                   <Alert
                     type={syncOk ? 'success' : 'warning'}
                     showIcon
                     style={{ marginBottom: 16 }}
                     message={
-                      !cc ? '请选择卡 BIN' :
                       !cardholderProfile ? '请先创建持卡人后再开卡' :
-                      syncOk ? `${cc} 持卡人已同步（${ch?.syncStatus === 'success' ? '****' + ch?.providerCardholderIdLast4 : ''}）` :
-                      `请先同步 ${cc} 持卡人后再开卡`
+                      syncOk ? '持卡人资料已完成' : '持卡人资料未完成，请联系平台客服'
                     }
                   />
                 )
@@ -654,11 +635,10 @@ const Cards: React.FC = () => {
           </Form.Item>
 
           <Form.Item name="binId" label="卡 BIN" rules={availableBins.length ? [{ required: true, message: '请选择卡 BIN' }] : []}>
-            <Select loading={binsLoading} placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} allowClear
-              onChange={() => form.setFieldsValue({})}>
+            <Select loading={binsLoading} placeholder={binsLoading ? '加载 BIN 中...' : '请选择卡 BIN'} allowClear>
               {availableBins.map((bin) => (
                 <Option key={bin.id} value={bin.id}>
-                  {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''} - {bin.channel_code || ''}
+                  {bin.bin_code} {bin.card_brand ? `(${bin.card_brand})` : ''}
                 </Option>
               ))}
             </Select>
@@ -690,11 +670,7 @@ const Cards: React.FC = () => {
 
           <Form.Item shouldUpdate>
             {({ getFieldValue }) => {
-              const binId = getFieldValue('binId')
-              const bin = availableBins.find(b => b.id === binId)
-              const cc = bin?.channel_code?.toUpperCase()
-              const ch = cardholderChannels.find(c => c.channelCode === cc)
-              const canCreate = !cc || (cardholderProfile && ch?.syncStatus === 'success')
+              const canCreate = cardholderProfile?.profileReady === true
               return (
                 <Button type="primary" htmlType="submit" loading={creating} block disabled={!canCreate}>
                   确认开卡
@@ -739,72 +715,49 @@ const Cards: React.FC = () => {
                 </Col>
               </Row>
 
-              <Alert type="info" showIcon message="UQPay 持卡人地址仅支持新加坡，请填写新加坡账单地址。" style={{ marginBottom: 16, marginTop: 8 }} />
+              <Alert type="info" showIcon message="地址资料" style={{ marginBottom: 16, marginTop: 8 }} />
               <Row gutter={16}>
                 <Col span={8}>
-                  <Form.Item name="uqpayCountryCode" label="国家" initialValue="SG">
-                    <Input disabled />
-                  </Form.Item>
-                </Col>
-                <Col span={16}>
-                  <Form.Item name="uqpayAddressLine1" label="地址" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder="1 Raffles Place" />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Row gutter={16}>
-                <Col span={8}>
-                  <Form.Item name="uqpayCity" label="城市" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder="Singapore" />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name="uqpayState" label="州/省" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder="Singapore" />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name="uqpayPostalCode" label="邮编" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder="048616" />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Alert type="info" showIcon message="GEO 持卡人地址仅支持美国或香港。" style={{ marginBottom: 16, marginTop: 8 }} />
-              <Row gutter={16}>
-                <Col span={8}>
-                  <Form.Item name="geoCountryCode" label="国家" rules={[{ required: true, message: '请选择国家' }]} initialValue="USA">
-                    <Select onChange={(val) => setChGeoCountry(val)}>
+                  <Form.Item name="countryCode" label="国家" rules={[{ required: true, message: '请选择国家' }]} initialValue="USA">
+                    <Select>
                       <Option value="USA">USA</Option>
+                      <Option value="SG">SG</Option>
                       <Option value="HK">HK</Option>
                     </Select>
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item label="手机区号" shouldUpdate>
-                    {() => <Input value={chGeoCountry === 'HK' ? '852' : '1'} disabled />}
+                  <Form.Item name="mobilePrefix" label="手机区号">
+                    <Input placeholder="1" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name="geoBillingState" label="州/省" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder={chGeoCountry === 'HK' ? 'Hong Kong' : 'CA'} />
+                  <Form.Item name="postalCode" label="邮编" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="90001" />
                   </Form.Item>
                 </Col>
               </Row>
               <Row gutter={16}>
-                <Col span={8}>
-                  <Form.Item name="geoBillingCity" label="城市" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder={chGeoCountry === 'HK' ? 'Hong Kong' : 'Los Angeles'} />
+                <Col span={12}>
+                  <Form.Item name="state" label="州/省" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="CA" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="city" label="城市" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="Los Angeles" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={16}>
+                  <Form.Item name="addressLine1" label="地址" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="123 Main Street" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name="geoBillingAddress" label="地址" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder={chGeoCountry === 'HK' ? '1 Central' : '123 Main Street'} />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name="geoBillingZipCode" label="邮编" rules={[{ required: true, message: '必填' }]}>
-                    <Input placeholder={chGeoCountry === 'HK' ? '999077' : '90001'} />
+                  <Form.Item name="addressLine2" label="地址补充（可选）">
+                    <Input placeholder="Apt 1B" />
                   </Form.Item>
                 </Col>
               </Row>
@@ -817,19 +770,14 @@ const Cards: React.FC = () => {
         ) : (
           <div>
             <p><strong>持卡人邮箱：</strong>{cardholderProfile.emailMasked || '-'}</p>
-            <h4 style={{ marginTop: 16 }}>渠道同步状态</h4>
-            {cardholderChannels.map(ch => (
-              <div key={ch.channelCode} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Tag color={ch.syncStatus === 'success' ? 'green' : ch.syncStatus === 'failed' ? 'red' : 'orange'}
-                  style={{ fontSize: 14, padding: '4px 8px' }}>
-                  {ch.channelCode}：{ch.syncStatus === 'success' ? '已同步' : ch.syncStatus === 'failed' ? '同步失败' : '未同步'}
-                  {ch.syncStatus === 'success' && ch.providerCardholderIdLast4 && ` (****${ch.providerCardholderIdLast4})`}
-                </Tag>
-                {ch.syncStatus !== 'success' && (
-                  <Button size="small" icon={<SyncOutlined />} onClick={handleChSync}>重试</Button>
-                )}
+            <Tag color={cardholderProfile.profileReady ? 'green' : 'orange'} style={{ fontSize: 14, padding: '4px 8px' }}>
+              持卡人资料：{cardholderProfile.profileReady ? '已完成' : '待完善'}
+            </Tag>
+            {!cardholderProfile.profileReady && (
+              <div style={{ marginTop: 12 }}>
+                <Button icon={<SyncOutlined />} onClick={handleChSync} loading={chSyncing}>重试</Button>
               </div>
-            ))}
+            )}
             <Button style={{ marginTop: 16 }} onClick={() => setChModalVisible(false)}>关闭</Button>
           </div>
         )}

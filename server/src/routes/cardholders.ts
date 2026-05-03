@@ -68,7 +68,7 @@ router.get('/', (req: AuthRequest, res: Response<ApiResponse>) => {
   });
 });
 
-// ── 查询当前持卡人同步状态（供开卡弹窗使用） ──────────────────────────
+// ── 查询当前持卡人同步状态（中性返回，不暴露渠道） ──────────────────
 
 router.get('/current', (req: AuthRequest, res: Response<ApiResponse>) => {
   const profiles = db.prepare(`
@@ -81,22 +81,18 @@ router.get('/current', (req: AuthRequest, res: Response<ApiResponse>) => {
     return res.json({
       code: 0,
       message: 'success',
-      data: { profileId: 0, emailMasked: '', channels: [] },
+      data: { profileId: 0, emailMasked: '', profileReady: false, canCreateCard: false },
       timestamp: Date.now(),
     });
   }
 
   const accounts = db.prepare(`
-    SELECT channel_code, provider_cardholder_id, sync_status
-    FROM cardholder_channel_accounts
+    SELECT sync_status FROM cardholder_channel_accounts
     WHERE profile_id = ?
   `).all(profiles.id) as any[];
 
-  const channels = accounts.map((a: any) => ({
-    channelCode: a.channel_code,
-    syncStatus: a.sync_status,
-    providerCardholderIdLast4: a.provider_cardholder_id ? a.provider_cardholder_id.slice(-4) : '',
-  }));
+  // 所有启用渠道均同步成功 → profileReady=true
+  const allSuccess = accounts.length > 0 && accounts.every((a: any) => a.sync_status === 'success');
 
   res.json({
     code: 0,
@@ -104,13 +100,15 @@ router.get('/current', (req: AuthRequest, res: Response<ApiResponse>) => {
     data: {
       profileId: profiles.id,
       emailMasked: profiles.email ? maskEmail(profiles.email) : '',
-      channels,
+      profileReady: allSuccess,
+      canCreateCard: allSuccess,
+      message: allSuccess ? undefined : '持卡人资料未完成，请联系平台客服',
     },
     timestamp: Date.now(),
   });
 });
 
-// ── 创建持卡人 ─────────────────────────────────────────────────────────────
+// ── 创建持卡人（统一通用字段，不暴露渠道信息） ──────────────────────
 
 router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
   const userId = req.user!.userId;
@@ -124,63 +122,52 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
   }
 
   const {
-    firstName, lastName, email, phone, birthDate,
-    // UQPay SG 地址
-    uqpayAddressLine1, uqpayCity, uqpayState, uqpayPostalCode,
-    // GEO USA/HK 地址
-    geoCountryCode, geoBillingState, geoBillingCity, geoBillingAddress, geoBillingZipCode,
+    firstName, lastName, email, phone, mobilePrefix, birthDate,
+    countryCode, state, city, addressLine1, addressLine2, postalCode,
   } = req.body;
 
   // ── 校验 ──
   const errors: string[] = [];
-
-  // 基础身份
   if (!firstName || !firstName.trim()) errors.push('firstName 必填');
   if (!lastName || !lastName.trim()) errors.push('lastName 必填');
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) errors.push('email 格式不正确');
   if (!phone) errors.push('phone 必填');
   if (!birthDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(birthDate).trim())) errors.push('birthDate 格式必须为 YYYY-MM-DD');
 
-  // UQPay 地址：国家固定 SG
-  if (!uqpayAddressLine1 || !String(uqpayAddressLine1).trim()) errors.push('uqpayAddressLine1 必填');
-  if (!uqpayCity || !String(uqpayCity).trim()) errors.push('uqpayCity 必填');
-  if (!uqpayState || !String(uqpayState).trim()) errors.push('uqpayState 必填');
-  if (!uqpayPostalCode || !String(uqpayPostalCode).trim()) errors.push('uqpayPostalCode 必填');
-
-  // GEO 地址
-  const geoCc = String(geoCountryCode || 'USA').toUpperCase();
-  if (!['USA', 'HK'].includes(geoCc)) errors.push('geoCountryCode 仅支持 USA 或 HK');
-  if (!geoBillingState || !String(geoBillingState).trim()) errors.push('geoBillingState 必填');
-  if (!geoBillingCity || !String(geoBillingCity).trim()) errors.push('geoBillingCity 必填');
-  if (!geoBillingAddress || !String(geoBillingAddress).trim()) errors.push('geoBillingAddress 必填');
-  if (!geoBillingZipCode || !String(geoBillingZipCode).trim()) errors.push('geoBillingZipCode 必填');
+  const cc = String(countryCode || 'USA').toUpperCase();
+  if (!['USA', 'SG', 'HK'].includes(cc)) errors.push('国家仅支持 USA/SG/HK');
+  if (!state || !String(state).trim()) errors.push('state 必填');
+  if (!city || !String(city).trim()) errors.push('city 必填');
+  if (!addressLine1 || !String(addressLine1).trim()) errors.push('addressLine1 必填');
+  if (!postalCode || !String(postalCode).trim()) errors.push('postalCode 必填');
 
   if (errors.length > 0) {
     return res.json({ code: 400, message: errors.join('; '), timestamp: Date.now() });
   }
 
-  const geoMp = geoCc === 'HK' ? '852' : '1';
+  const mp = String(mobilePrefix || '1').replace(/^\+/, '');
   const sanitizedEmail = email.trim();
 
-  // ── 创建本地 profile（只保存基础身份） ──
+  // ── 创建本地 profile（通用字段） ──
   const profileResult = db.prepare(`
     INSERT INTO user_cardholder_profiles
-      (user_id, first_name, last_name, email, phone, birth_date, country_code)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (user_id, first_name, last_name, email, phone, mobile_prefix, birth_date,
+       country_code, state, city, address_line1, address_line2, postal_code)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    userId, firstName.trim(), lastName.trim(), sanitizedEmail, phone.trim(), birthDate.trim(), 'USA',
+    userId, firstName.trim(), lastName.trim(), sanitizedEmail, phone.trim(), mp, birthDate.trim(),
+    cc, state.trim(), city.trim(), addressLine1.trim(), (addressLine2 || '').trim(), postalCode.trim(),
   );
   saveDatabase();
   const profileId = profileResult.lastInsertRowid as number;
 
-  // ── 确认已启用渠道 ──
+  // ── 确认已启用渠道（内部逻辑，不暴露给前端） ──
   const channelCodes = db.prepare(
     "SELECT DISTINCT channel_code FROM card_channels WHERE UPPER(channel_code) IN ('UQPAY','GEO') AND status=1"
   ).all() as any[];
   const activeChannels: string[] = channelCodes.map((c: any) => c.channel_code.toUpperCase());
 
-  interface SyncResult { channelCode: string; success: boolean; providerCardholderIdLast4?: string; error?: string }
-  const syncResults: SyncResult[] = [];
+  let allSuccess = true;
 
   for (const chCode of activeChannels) {
     try {
@@ -189,7 +176,7 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
       if (chCode === 'UQPAY') {
         const { UqPaySDK } = await import('../channels/uqpay');
         const channel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='UQPAY' AND status=1").get() as any;
-        if (!channel) throw new Error('UQPay 渠道未启用');
+        if (!channel) continue;
 
         let config: Record<string, any> = {};
         try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
@@ -200,30 +187,36 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
           baseUrl: channel.api_base_url,
         });
 
+        // UQPay adapter 从通用字段映射
         const result = await sdk.getOrCreateCardholder({
           userId,
           email: sanitizedEmail,
           firstName: firstName.trim(),
           lastName: lastName.trim(),
-          countryCode: 'SG',
+          countryCode: cc === 'USA' ? 'US' : cc,
           phoneNumber: phone.trim(),
           database: null,
         });
-
         providerId = result.cardholder_id || result.id || '';
-        if (!providerId) throw new Error('UQPay 未返回 cardholder_id');
 
-        // 同步到 uqpay_cardholders 表（旧表兼容）
-        db.prepare(`
-          INSERT OR REPLACE INTO uqpay_cardholders (user_id, uqpay_cardholder_id, email, phone_number, cardholder_status)
-          VALUES (?, ?, ?, ?, 'SUCCESS')
-        `).run(userId, providerId, sanitizedEmail, phone.trim());
+        if (providerId) {
+          db.prepare(`
+            INSERT OR REPLACE INTO uqpay_cardholders (user_id, uqpay_cardholder_id, email, phone_number, cardholder_status)
+            VALUES (?, ?, ?, ?, 'SUCCESS')
+          `).run(userId, providerId, sanitizedEmail, phone.trim());
+
+          db.prepare(`
+            INSERT OR REPLACE INTO cardholder_channel_accounts
+              (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status)
+            VALUES (?, ?, 'UQPAY', ?, ?, 'success')
+          `).run(profileId, userId, providerId, sanitizedEmail);
+        }
       }
 
       if (chCode === 'GEO') {
         const { GeoSdk } = await import('../channels/geo');
         const channel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='GEO' AND status=1").get() as any;
-        if (!channel) throw new Error('GEO 渠道未启用');
+        if (!channel) continue;
 
         let geoConfig: Record<string, any> = {};
         try { geoConfig = JSON.parse(channel.config_json || '{}'); } catch (_) {}
@@ -238,102 +231,58 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
 
         const cardUserId = 'GEOU' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6).toUpperCase();
 
+        // GEO adapter 从通用字段映射
         const result = await sdk.createCardholder({
           userReqNo: crypto.randomUUID(),
           cardUserId,
           mobile: phone.trim(),
-          mobilePrefix: geoMp,
+          mobilePrefix: mp,
           email: sanitizedEmail,
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           birthDate: birthDate.trim(),
-          billingCity: geoBillingCity.trim(),
-          billingState: geoBillingState.trim(),
-          billingCountry: geoCc,
-          billingAddress: geoBillingAddress.trim(),
-          billingZipCode: geoBillingZipCode.trim(),
-          countryCode: geoCc,
+          billingCity: city.trim(),
+          billingState: state.trim(),
+          billingCountry: cc,
+          billingAddress: addressLine1.trim() + (addressLine2 ? ' ' + addressLine2.trim() : ''),
+          billingZipCode: postalCode.trim(),
+          countryCode: cc,
         });
 
         providerId = result.cardUserId || cardUserId;
-        if (!providerId) throw new Error('GEO 未返回 cardUserId');
 
-        // 写入 geoCardUserIds（旧表兼容）
-        geoConfig.geoCardUserIds = geoConfig.geoCardUserIds || {};
-        geoConfig.geoCardUserIds[String(userId)] = providerId;
-        db.prepare("UPDATE card_channels SET config_json = ?, updated_at = datetime('now') WHERE channel_code = 'GEO'")
-          .run(JSON.stringify(geoConfig));
+        if (providerId) {
+          geoConfig.geoCardUserIds = geoConfig.geoCardUserIds || {};
+          geoConfig.geoCardUserIds[String(userId)] = providerId;
+          db.prepare("UPDATE card_channels SET config_json = ?, updated_at = datetime('now') WHERE channel_code = 'GEO'")
+            .run(JSON.stringify(geoConfig));
+
+          db.prepare(`
+            INSERT OR REPLACE INTO cardholder_channel_accounts
+              (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status)
+            VALUES (?, ?, 'GEO', ?, ?, 'success')
+          `).run(profileId, userId, providerId, sanitizedEmail);
+        }
       }
-
-      // 构建该渠道的 provider_payload
-      let providerPayload: any = {};
-      if (chCode === 'UQPAY') {
-        providerPayload = {
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          email: sanitizedEmail,
-          phone: phone.trim(),
-          countryCode: 'SG',
-          addressLine1: String(uqpayAddressLine1 || '').trim(),
-          city: String(uqpayCity || '').trim(),
-          state: String(uqpayState || '').trim(),
-          postalCode: String(uqpayPostalCode || '').trim(),
-        };
-      }
-      if (chCode === 'GEO') {
-        providerPayload = {
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          email: sanitizedEmail,
-          mobile: phone.trim(),
-          mobilePrefix: geoMp,
-          birthDate: birthDate.trim(),
-          countryCode: geoCc,
-          billingCountry: geoCc,
-          billingState: geoBillingState.trim(),
-          billingCity: geoBillingCity.trim(),
-          billingAddress: geoBillingAddress.trim(),
-          billingZipCode: geoBillingZipCode.trim(),
-        };
-      }
-
-      // 写入 cardholder_channel_accounts
-      db.prepare(`
-        INSERT OR REPLACE INTO cardholder_channel_accounts
-          (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status, provider_payload_json)
-        VALUES (?, ?, ?, ?, ?, 'success', ?)
-      `).run(profileId, userId, chCode, providerId, sanitizedEmail, JSON.stringify(providerPayload));
-
-      saveDatabase();
-      syncResults.push({
-        channelCode: chCode,
-        success: true,
-        providerCardholderIdLast4: providerId.slice(-4),
-      });
     } catch (err: any) {
+      allSuccess = false;
       const msg = (err.message || '').slice(0, 300);
-      console.error('[Cardholder] 同步 ' + chCode + ' 失败:', msg);
+      console.error('[Cardholder] 内部同步失败: userId=' + userId + ' channel=' + chCode + ' error=' + msg);
 
       db.prepare(`
         INSERT OR REPLACE INTO cardholder_channel_accounts
           (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status, last_error)
         VALUES (?, ?, ?, '', ?, 'failed', ?)
       `).run(profileId, userId, chCode, sanitizedEmail, msg);
-
-      saveDatabase();
-      syncResults.push({
-        channelCode: chCode,
-        success: false,
-        error: msg,
-      });
     }
   }
 
-  const allSuccess = syncResults.every(r => r.success);
+  saveDatabase();
+
   res.json({
     code: 0,
-    message: allSuccess ? '持卡人创建完成' : '部分渠道创建失败，可重试同步',
-    data: { profileId, syncResults },
+    message: allSuccess ? '持卡人资料创建成功' : '持卡人资料创建成功，部分渠道同步中',
+    data: { profileId, profileReady: allSuccess, emailMasked: maskEmail(sanitizedEmail) },
     timestamp: Date.now(),
   });
 });
@@ -368,12 +317,12 @@ router.post('/:id/sync', async (req: AuthRequest, res: Response<ApiResponse>) =>
     }
   }
 
+  // 同步失败的 profile 直接视为 pending
   if (pending.length === 0) {
-    return res.json({ code: 0, message: '所有渠道已同步完成', timestamp: Date.now() });
+    return res.json({ code: 0, message: '持卡人资料已完成', timestamp: Date.now() });
   }
 
-  interface SyncResult { channelCode: string; success: boolean; providerCardholderIdLast4?: string; error?: string }
-  const syncResults: SyncResult[] = [];
+  let syncDone = false;
 
   for (const p of pending) {
     const chCode = p.channel_code.toUpperCase();
@@ -416,9 +365,10 @@ router.post('/:id/sync', async (req: AuthRequest, res: Response<ApiResponse>) =>
           mobile: profile.phone, mobilePrefix: profile.mobile_prefix || '1',
           email: profile.email, firstName: profile.first_name, lastName: profile.last_name,
           birthDate: profile.birth_date || '1990-01-01',
-          billingCity: profile.billing_city || 'Los Angeles', billingState: profile.billing_state || 'CA',
-          billingCountry: profile.billing_country || 'USA', billingAddress: profile.billing_address || 'Default',
-          billingZipCode: profile.billing_zip_code || '90012', countryCode: profile.country_code || 'USA',
+          billingCity: profile.city || 'Los Angeles', billingState: profile.state || 'CA',
+          billingCountry: profile.country_code || 'USA',
+          billingAddress: profile.address_line1 || 'Default',
+          billingZipCode: profile.postal_code || '90012', countryCode: profile.country_code || 'USA',
         });
         providerId = result.cardUserId || cardUserId;
       }
@@ -429,20 +379,26 @@ router.post('/:id/sync', async (req: AuthRequest, res: Response<ApiResponse>) =>
             (profile_id, user_id, channel_code, provider_cardholder_id, provider_email, sync_status)
           VALUES (?, ?, ?, ?, ?, 'success')
         `).run(profileId, req.user!.userId, chCode, providerId, profile.email);
+        syncDone = true;
       }
-
-      syncResults.push({
-        channelCode: chCode,
-        success: !!providerId,
-        providerCardholderIdLast4: providerId ? providerId.slice(-4) : undefined,
-      });
     } catch (err: any) {
-      syncResults.push({ channelCode: chCode, success: false, error: (err.message || '').slice(0, 200) });
+      console.error('[Cardholder] 同步失败: userId=' + userId + ' error=' + (err.message || '').slice(0, 200));
     }
   }
 
   saveDatabase();
-  res.json({ code: 0, message: 'sync_results', data: syncResults, timestamp: Date.now() });
+
+  const finalStatus = db.prepare(`
+    SELECT COUNT(*) as failed FROM cardholder_channel_accounts
+    WHERE profile_id=? AND sync_status!='success'
+  `).get(profileId) as any;
+  const allSuccess = !finalStatus || finalStatus.failed === 0;
+
+  res.json({
+    code: 0,
+    message: allSuccess ? '持卡人资料已完成' : '持卡人资料未完成，请联系平台客服',
+    timestamp: Date.now(),
+  });
 });
 
 export default router;

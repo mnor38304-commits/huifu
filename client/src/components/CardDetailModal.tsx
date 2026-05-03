@@ -543,7 +543,7 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
       </Spin>
     </Modal>
 
-      {/* ── UQPay Secure iFrame Modal ── */}
+      {/* ── 安全卡面 Modal ── */}
       <Modal
         title="安全查看卡信息"
         open={secureIframeVisible}
@@ -563,7 +563,7 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="完整卡号、有效期和 CVV 在 UQPay Secure iFrame 中展示。出于安全合规要求，父页面不能读取或复制完整卡信息。如需复制，请在安全卡面页面内操作。"
+                message="完整卡号、有效期和 CVV 在安全卡面页面中展示。出于安全合规要求，父页面不能读取或复制完整卡信息。如需复制，请在安全卡面页面内操作。"
               />
               {secureIframeExpiresAt && (
                 <p style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
