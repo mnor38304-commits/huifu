@@ -458,11 +458,6 @@ const Cards: React.FC = () => {
               刷新状态
             </Button>
           )}
-          {record.status === 0 && (
-            <Button type="link" size="small" danger onClick={() => handleFreeze(record.id, true)}>
-              <LockOutlined /> 冻结
-            </Button>
-          )}
           {record.status === 2 && record.auto_frozen_reason === 'USAGE_EXPIRED' && (
             <Button type="link" size="small" icon={<ClockCircleOutlined />} style={{ color: '#1677ff' }} onClick={() => openRenewModal(record)}>
               续期解冻
@@ -473,12 +468,17 @@ const Cards: React.FC = () => {
               <UnlockOutlined /> 解冻
             </Button>
           )}
-          {record.status !== 4 && (
+          {record.status === 1 && (
             <Popconfirm title="确定要注销此卡片吗？" onConfirm={() => handleCancel(record.id)} okText="确定" cancelText="取消">
               <Button type="link" size="small" danger>
                 <DeleteOutlined /> 销卡
               </Button>
             </Popconfirm>
+          )}
+          {record.status === 1 && (
+            <Button type="link" size="small" danger onClick={() => handleFreeze(record.id, true)}>
+              <LockOutlined /> 冻结
+            </Button>
           )}
           {record.status === 1 && (
             <Button type="link" size="small" icon={<ClockCircleOutlined />} style={{ color: '#8c8c8c' }} onClick={() => openExpiryModal(record)}>
