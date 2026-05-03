@@ -187,11 +187,12 @@ router.get('/bins/available', authMiddleware, async (req: AuthRequest, res: Resp
       bins = bins.filter((bin: any) => !!bin.external_bin_id);
     }
 
-    // 脱敏：商户端不暴露 bin_code（UQPay product 返回的 card_bin 与实际 PAN 前缀可能不一致），
-    // 改为中性产品名称，避免客户因 BIN 前缀误解。
+    // 商户端展示卡段+BIN 名称，但禁止暴露渠道信息
     const sanitized = bins.map((bin: any) => ({
       id: bin.id,
-      productName: bin.card_brand ? `${bin.card_brand} 虚拟卡` : '虚拟卡',
+      displayName: `${bin.bin_code} ${bin.card_brand || ''} 虚拟卡`,
+      binCode: bin.bin_code,
+      brand: bin.card_brand,
       currency: bin.currency,
       open_fee: bin.open_fee,
       topup_fee_rate: bin.topup_fee_rate,
@@ -374,13 +375,17 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
       uqpayCardholderId = realCardholderId;
       console.log('[UQPay] 使用持卡人: userId=' + req.user!.userId + ' cardholderIdLast4=' + realCardholderId.slice(-4));
 
-      // 2. 获取卡产品（返回标准化 UqPayCardProduct）
-      const cardProduct = await sdk.getCardProductId('USD');
+      // 2. 使用商户选择的 BIN 的 external_bin_id 作为 UQPay card_product_id
+      //    禁止调用 getCardProductId()（它会忽略选中 BIN 返回第一个产品）
+      const cardProductId = selectedBin.external_bin_id;
+      if (!cardProductId) {
+        return res.json({ code: 500, message: '卡产品配置不完整，请刷新后重试', timestamp: Date.now() });
+      }
 
       // 3. 创建卡片
       const cardResult = await sdk.createCard({
         cardholderId: realCardholderId,
-        cardProductId: cardProduct.product_id,
+        cardProductId,
         cardCurrency: 'USD',
         cardLimit: Number(creditLimit),
         cardType: cardType === 'physical' ? 'physical' : 'virtual',

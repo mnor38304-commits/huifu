@@ -547,7 +547,7 @@ const Cards: React.FC = () => {
             <Select loading={binsLoading} placeholder={binsLoading ? '加载中...' : '请选择卡产品'} allowClear>
               {availableBins.map((bin) => (
                 <Option key={bin.id} value={bin.id}>
-                  {bin.productName || `${bin.card_brand || ''} 虚拟卡`}
+                  {bin.displayName}
                 </Option>
               ))}
             </Select>
