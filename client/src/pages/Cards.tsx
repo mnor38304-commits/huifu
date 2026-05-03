@@ -587,8 +587,11 @@ const Cards: React.FC = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item name="creditLimit" label="信用额度 (USD)" rules={[{ required: true, message: '请输入额度' }]}>
-            <InputNumber min={10} max={10000} style={{ width: '100%' }} placeholder="10 - 10,000" />
+          <Form.Item name="creditLimit" label="信用额度 (USD)" rules={[
+            { required: true, message: '请输入信用额度' },
+            { type: 'number', min: 10, message: '信用额度最低为 10 USD' }
+          ]}>
+            <InputNumber min={10} max={10000} style={{ width: '100%' }} placeholder="最低 10 USD" />
           </Form.Item>
 
           <Form.Item name="singleLimit" label="单笔限额 (USD)">
