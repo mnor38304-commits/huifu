@@ -218,6 +218,7 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
     c.credit_limit, c.single_limit, c.daily_limit, c.status, c.expire_date, c.purpose,
     c.created_at, c.bin_id, c.channel_code, c.remark,
     c.usage_expires_at, c.auto_frozen_at, c.auto_frozen_reason,
+    c.freeze_reason,
     COALESCE(f.failed_count, 0) as failed_count
     FROM cards c
     LEFT JOIN (
