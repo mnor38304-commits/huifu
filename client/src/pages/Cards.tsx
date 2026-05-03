@@ -179,7 +179,7 @@ const Cards: React.FC = () => {
 
   const openTopupModal = (record: any) => {
     if (record.external_id) {
-      message.info('UQPay 卡充值接口待接入渠道真实资金接口，暂不可用')
+      message.info('渠道卡充值接口暂不可用')
       return
     }
     setTopupCardId(record.id)
@@ -295,7 +295,7 @@ const Cards: React.FC = () => {
 
   const handleWithdraw = (record: any) => {
     if (record.external_id) {
-      message.info('UQPay 卡余额转出接口待接入，暂不可用')
+      message.info('渠道卡余额转出接口暂不可用')
     } else {
       message.info('余额转出功能待接入渠道接口后开放')
     }
@@ -514,8 +514,8 @@ const Cards: React.FC = () => {
         <h2>VCC 卡片管理</h2>
         <Space>
           <Button icon={<UserOutlined />} onClick={openChModal}
-            type={cardholderProfile ? 'default' : 'primary'}>
-            {cardholderProfile ? '管理持卡人' : '创建持卡人'}
+            type={cardholderProfile?.profileReady ? 'default' : 'primary'}>
+            {cardholderProfile?.profileReady ? '持卡人资料' : '创建持卡人'}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}
             disabled={!cardholderProfile?.profileReady}>
@@ -530,10 +530,6 @@ const Cards: React.FC = () => {
           <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
             <Row gutter={16} align="middle">
               <Col><UserOutlined style={{ fontSize: 20, color: '#1677ff' }} /></Col>
-              <Col>
-                <span style={{ fontWeight: 500 }}>持卡人邮箱：</span>
-                <span>{cardholderProfile.emailMasked || '-'}</span>
-              </Col>
               <Col>
                 <Tag color={cardholderProfile.profileReady ? 'green' : 'orange'}>
                   持卡人资料：{cardholderProfile.profileReady ? '已完成' : '待完善'}
@@ -688,8 +684,8 @@ const Cards: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* ── 创建/管理持卡人弹窗 ── */}
-      <Modal title="创建持卡人" open={chModalVisible} onCancel={() => setChModalVisible(false)} footer={null} width={650} destroyOnClose>
+      {/* ── 创建/编辑持卡人资料弹窗 ── */}
+      <Modal title={cardholderProfile?.profileReady ? '持卡人资料' : '创建持卡人'} open={chModalVisible} onCancel={() => setChModalVisible(false)} footer={null} width={650} destroyOnClose>
         {!cardholderProfile ? (
           <Spin spinning={chCreating}>
             <Form form={chForm} layout="vertical" onFinish={handleChCreate}>
@@ -776,7 +772,7 @@ const Cards: React.FC = () => {
           </Spin>
         ) : (
           <div>
-            <p><strong>持卡人邮箱：</strong>{cardholderProfile.emailMasked || '-'}</p>
+            <p><strong>邮箱：</strong>{cardholderProfile.emailMasked || '-'}</p>
             <Tag color={cardholderProfile.profileReady ? 'green' : 'orange'} style={{ fontSize: 14, padding: '4px 8px' }}>
               持卡人资料：{cardholderProfile.profileReady ? '已完成' : '待完善'}
             </Tag>
