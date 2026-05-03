@@ -69,10 +69,6 @@ const Cards: React.FC = () => {
     finally { setCardholderLoading(false) }
   }
 
-  const getChannelSyncStatus = (channelCode: string) => {
-    return cardholderChannels.find(c => c.channelCode === channelCode)
-  }
-
   const loadCards = async () => {
     try {
       const params: any = {}
@@ -517,10 +513,12 @@ const Cards: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2>VCC 卡片管理</h2>
         <Space>
-          <Button icon={<UserOutlined />} onClick={openChModal} type="default">
+          <Button icon={<UserOutlined />} onClick={openChModal}
+            type={cardholderProfile ? 'default' : 'primary'}>
             {cardholderProfile ? '管理持卡人' : '创建持卡人'}
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}
+            disabled={!cardholderProfile?.profileReady}>
             开卡
           </Button>
         </Space>
@@ -552,7 +550,16 @@ const Cards: React.FC = () => {
           </Card>
         )}
         {!cardholderProfile && !cardholderLoading && (
-          <Alert style={{ marginBottom: 16 }} type="info" showIcon message="请先创建持卡人后再开卡。" />
+          <Alert style={{ marginBottom: 16 }} type="warning" showIcon
+            message={
+              <Space>
+                <span>请先创建持卡人后再开卡。</span>
+                <Button size="small" type="primary" icon={<UserOutlined />} onClick={openChModal}>
+                  创建持卡人
+                </Button>
+              </Space>
+            }
+          />
         )}
       </Spin>
 
