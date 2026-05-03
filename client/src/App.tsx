@@ -17,6 +17,7 @@ import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import Dashboard from './pages/Dashboard'
 import Cards from './pages/Cards'
+import Cardholders from './pages/Cardholders'
 import CardDetail from './pages/CardDetail'
 import Transactions from './pages/Transactions'
 import Bills from './pages/Bills'
@@ -78,6 +79,7 @@ const App: React.FC = () => {
     { key: '/', icon: <DashboardOutlined />, label: '账户概览' },
     { key: '/wallet', icon: <WalletOutlined />, label: '钱包' },
     { key: '/cards', icon: <CreditCardOutlined />, label: 'VCC卡片' },
+    { key: '/cardholders', icon: <UserOutlined />, label: '持卡人管理' },
     { key: '/transactions', icon: <SwapOutlined />, label: '交易查询' },
     { key: '/bills', icon: <FileTextOutlined />, label: '账单中心' },
     { key: '/settings', icon: <SettingOutlined />, label: '设置' },
@@ -133,6 +135,7 @@ const App: React.FC = () => {
             <Route path="/wallet" element={<Wallet />} />
             <Route path="/cards" element={<Cards />} />
             <Route path="/cards/:id" element={<CardDetail />} />
+            <Route path="/cardholders" element={<Cardholders />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/bills" element={<Bills />} />
             <Route path="/settings" element={<Settings />} />

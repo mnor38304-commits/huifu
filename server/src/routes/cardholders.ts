@@ -29,43 +29,28 @@ function maskEmail(email: string): string {
   return email[0] + '***' + email.substring(at);
 }
 
-// ── 查询持卡人 ─────────────────────────────────────────────────────────────
+// ── 查询持卡人列表（中性返回，不暴露渠道信息） ──────────────────────
 
 router.get('/', (req: AuthRequest, res: Response<ApiResponse>) => {
   const profiles = db.prepare(`
-    SELECT p.* FROM user_cardholder_profiles p
-    WHERE p.user_id = ?
-    ORDER BY p.id DESC LIMIT 1
-  `).get(req.user!.userId) as any;
+    SELECT id, first_name, last_name, email, phone, country_code, city, status, created_at
+    FROM user_cardholder_profiles
+    WHERE user_id = ?
+    ORDER BY id DESC
+  `).all(req.user!.userId) as any[];
 
-  if (!profiles) {
-    return res.json({ code: 0, message: 'success', data: null, timestamp: Date.now() });
-  }
-
-  const accounts = db.prepare(`
-    SELECT channel_code, provider_cardholder_id, provider_email, sync_status, last_error
-    FROM cardholder_channel_accounts
-    WHERE profile_id = ?
-  `).all(profiles.id) as any[];
-
-  const channels = accounts.map((a: any) => ({
-    channelCode: a.channel_code,
-    cardholderIdLast4: a.provider_cardholder_id ? a.provider_cardholder_id.slice(-4) : '',
-    providerEmail: a.provider_email ? maskEmail(a.provider_email) : '',
-    syncStatus: a.sync_status,
-    lastError: a.last_error || '',
+  const data = profiles.map((p: any) => ({
+    id: p.id,
+    name: p.first_name + ' ' + p.last_name,
+    emailMasked: p.email ? maskEmail(p.email) : '',
+    phoneMasked: p.phone ? '****' + p.phone.slice(-4) : '',
+    countryCode: p.country_code || '',
+    city: p.city || '',
+    status: p.status ? 'active' : 'inactive',
+    createdAt: p.created_at || '',
   }));
 
-  res.json({
-    code: 0,
-    message: 'success',
-    data: {
-      profileId: profiles.id,
-      email: profiles.email ? maskEmail(profiles.email) : '',
-      channels,
-    },
-    timestamp: Date.now(),
-  });
+  res.json({ code: 0, message: 'success', data, timestamp: Date.now() });
 });
 
 // ── 查询当前持卡人同步状态（中性返回，不暴露渠道） ──────────────────
@@ -113,13 +98,7 @@ router.get('/current', (req: AuthRequest, res: Response<ApiResponse>) => {
 router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
   const userId = req.user!.userId;
 
-  // 校验已存在
-  const existing = db.prepare(
-    "SELECT id FROM user_cardholder_profiles WHERE user_id = ?"
-  ).get(userId) as any;
-  if (existing) {
-    return res.json({ code: 400, message: '您已创建过持卡人', timestamp: Date.now() });
-  }
+  // ── 校验 ──
 
   const {
     firstName, lastName, email, phone, mobilePrefix, birthDate,
@@ -281,8 +260,13 @@ router.post('/', async (req: AuthRequest, res: Response<ApiResponse>) => {
 
   res.json({
     code: 0,
-    message: allSuccess ? '持卡人资料创建成功' : '持卡人资料创建成功，部分渠道同步中',
-    data: { profileId, profileReady: allSuccess, emailMasked: maskEmail(sanitizedEmail) },
+    message: '持卡人创建成功',
+    data: {
+      id: profileId,
+      name: firstName.trim() + ' ' + lastName.trim(),
+      emailMasked: maskEmail(sanitizedEmail),
+      status: 'active',
+    },
     timestamp: Date.now(),
   });
 });
