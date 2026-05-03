@@ -434,23 +434,16 @@ const Cards: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: any) => (
+      render: (_: any, record: any) => {
+        const fr = record.freeze_reason || record.auto_frozen_reason || ''
+        const isInvestigating = ['INVESTIGATING','INVESTIGATING_BIN_MAPPING','CORRECTING','RISK','ADMIN_FREEZE'].includes(fr)
+        return (
         <Space size={4} wrap>
           <Button type="link" size="small" onClick={() => openCardDetail(record)}>
             <EyeOutlined /> 详情
           </Button>
-          {record.status === 1 && (
-            <Button type="link" size="small" icon={<WalletOutlined />} style={{ color: '#1677ff' }} onClick={() => openTopupModal(record)}>
-              充值
-            </Button>
-          )}
-          {record.status === 1 && (
-            <Tooltip title="余额转出功能待接入渠道接口后开放">
-              <Button type="link" size="small" icon={<TransactionOutlined />} style={{ color: '#fa8c16' }} onClick={() => handleWithdraw(record)}>
-                余额转出
-              </Button>
-            </Tooltip>
-          )}
+
+          {/* status=0: 处理中 — 仅刷新状态 */}
           {record.status === 0 && (
             <Button type="link" size="small" icon={<SyncOutlined />} style={{ color: '#1677ff' }}
               loading={syncingId === record.id}
@@ -458,14 +451,23 @@ const Cards: React.FC = () => {
               刷新状态
             </Button>
           )}
-          {record.status === 2 && record.auto_frozen_reason === 'USAGE_EXPIRED' && (
-            <Button type="link" size="small" icon={<ClockCircleOutlined />} style={{ color: '#1677ff' }} onClick={() => openRenewModal(record)}>
-              续期解冻
+
+          {/* status=1: 正常 — 全部操作 */}
+          {record.status === 1 && (
+            <Button type="link" size="small" icon={<WalletOutlined />} style={{ color: '#1677ff' }} onClick={() => openTopupModal(record)}>
+              充值
             </Button>
           )}
-          {record.status === 2 && !record.auto_frozen_reason && (
-            <Button type="link" size="small" onClick={() => handleFreeze(record.id, false)}>
-              <UnlockOutlined /> 解冻
+          {record.status === 1 && (
+            <Tooltip title="卡内余额可提现至平台钱包">
+              <Button type="link" size="small" icon={<TransactionOutlined />} style={{ color: '#fa8c16' }} onClick={() => handleWithdraw(record)}>
+                余额转出
+              </Button>
+            </Tooltip>
+          )}
+          {record.status === 1 && (
+            <Button type="link" size="small" danger onClick={() => handleFreeze(record.id, true)}>
+              <LockOutlined /> 冻结
             </Button>
           )}
           {record.status === 1 && (
@@ -476,17 +478,55 @@ const Cards: React.FC = () => {
             </Popconfirm>
           )}
           {record.status === 1 && (
-            <Button type="link" size="small" danger onClick={() => handleFreeze(record.id, true)}>
-              <LockOutlined /> 冻结
-            </Button>
-          )}
-          {record.status === 1 && (
             <Button type="link" size="small" icon={<ClockCircleOutlined />} style={{ color: '#8c8c8c' }} onClick={() => openExpiryModal(record)}>
               设置到期时间
             </Button>
           )}
+
+          {/* status=2 + USAGE_EXPIRED: 续期解冻 */}
+          {record.status === 2 && fr === 'USAGE_EXPIRED' && (
+            <Button type="link" size="small" icon={<ClockCircleOutlined />} style={{ color: '#1677ff' }} onClick={() => openRenewModal(record)}>
+              续期解冻
+            </Button>
+          )}
+
+          {/* status=2 + MERCHANT_FREEZE: 普通解冻 */}
+          {record.status === 2 && (fr === 'MERCHANT_FREEZE' || fr === 'MANUAL_FREEZE' || (!fr && !record.auto_frozen_reason)) && (
+            <Button type="link" size="small" onClick={() => handleFreeze(record.id, false)}>
+              <UnlockOutlined /> 解冻
+            </Button>
+          )}
+
+          {/* status=2 + 风控冻结: 只显示联系客服 */}
+          {record.status === 2 && isInvestigating && (
+            <Tooltip title="当前卡片因风控或调查被冻结，请联系平台客服">
+              <Button type="link" size="small" disabled style={{ color: '#999' }}>
+                <LockOutlined /> 冻结中
+              </Button>
+            </Tooltip>
+          )}
+
+          {/* status=2: 所有冻结卡都可以刷新状态 */}
+          {record.status === 2 && (
+            <Button type="link" size="small" icon={<SyncOutlined />} style={{ color: '#1677ff' }}
+              loading={syncingId === record.id}
+              onClick={() => handleSyncStatus(record.id)}>
+              刷新状态
+            </Button>
+          )}
+
+          {/* status=2 + balance=0 允许销卡 */}
+          {record.status === 2 && (record.balance === 0 || record.balance == null) && !isInvestigating && (
+            <Popconfirm title="确定要注销此卡片吗？" onConfirm={() => handleCancel(record.id)} okText="确定" cancelText="取消">
+              <Button type="link" size="small" danger>
+                <DeleteOutlined /> 销卡
+              </Button>
+            </Popconfirm>
+          )}
+
+          {/* status=4: 已销卡只显示详情 */}
         </Space>
-      ),
+      )},
     },
   ]
 
