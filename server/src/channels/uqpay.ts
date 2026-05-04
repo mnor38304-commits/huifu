@@ -1091,15 +1091,16 @@ export class UqPaySDK {
     expiresIn: number;
     expiresAt: string;
   }> {
-    // UQPay /token API 不接受 idempotency key，使用空 body 不传 idempotency key
-    const { token, expires_in, expires_at } = await this.rawRequest<{ token: string; expires_in: number; expires_at: string }>(
+    // UQPay /token API 要求标准 36 位 UUID（含连字符）作为 idempotency key
+    // 用基类 request() 默认发送的 randomUUID() (36 位含连字符)
+    const res = await this.request<{ token: string; expires_in: number; expires_at: string }>(
       'POST',
       `/api/v1/issuing/cards/${cardId}/token`
     );
     return {
-      token,
-      expiresIn: expires_in,
-      expiresAt: expires_at,
+      token: res.token,
+      expiresIn: res.expires_in,
+      expiresAt: res.expires_at,
     };
   }
 
