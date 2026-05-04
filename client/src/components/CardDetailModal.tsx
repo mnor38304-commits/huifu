@@ -172,16 +172,22 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
       const res = await revealCard(cardId);
       if (res.code === 0 && res.data) {
         if (res.data.mode === 'secure_iframe') {
-          // UQPay Secure iFrame 模式：自动请求 PAN Token 并打开 iFrame
+          // UQPay Secure iFrame 模式：请求 PAN Token 并在新窗口打开安全页面
           setSecureIframeLoading(true);
           try {
             const tokenRes = await getPanToken(cardId);
-            if (tokenRes.code === 0 && tokenRes.data?.iframeUrl) {
-              setSecureIframeUrl(tokenRes.data.iframeUrl);
+            const iframeUrl = tokenRes.data?.iframeUrl || tokenRes.data?.secureFrameUrl || tokenRes.data?.url;
+            if (tokenRes.code === 0 && iframeUrl) {
+              setSecureIframeUrl(iframeUrl);
               setSecureIframeExpiresAt(tokenRes.data.expiresAt || null);
               setSecureIframeVisible(true);
+              // 在新窗口打开安全页面
+              const win = window.open(iframeUrl, '_blank', 'noopener,noreferrer');
+              if (!win) {
+                message.warning('请允许弹窗，或在弹窗中点击链接手动打开');
+              }
             } else {
-              message.error(tokenRes.message || '获取安全卡信息页面失败');
+              message.error('获取安全卡信息页面失败');
             }
           } catch (err: any) {
             message.error(err?.response?.data?.message || '获取安全卡信息页面失败');
@@ -563,30 +569,23 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="完整卡号、有效期和 CVV 在安全卡面页面中展示。出于安全合规要求，父页面不能读取或复制完整卡信息。如需复制，请在安全卡面页面内操作。"
+                message="完整卡号、有效期和 CVV 在安全卡面页面中展示。出于安全合规要求，不能在页面内嵌入，请在新窗口中查看。"
               />
               {secureIframeExpiresAt && (
                 <p style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
                   Token 有效期至: {new Date(secureIframeExpiresAt).toLocaleString('zh-CN')}
                 </p>
               )}
-              <iframe
-                src={secureIframeUrl}
-                title="Secure Card Information"
-                style={{
-                  width: '100%',
-                  height: 420,
-                  border: '1px solid #eee',
-                  borderRadius: 8,
-                }}
-                sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
-                referrerPolicy="no-referrer"
-                onError={() => message.error('安全卡面加载失败，请在浏览器中手动打开')}
-              />
-              <p style={{ fontSize: 12, color: '#999', marginTop: 8, textAlign: 'center' }}>
-                若安全页面无法加载，请
-                <a href={secureIframeUrl} target="_blank" rel="noopener noreferrer">在新窗口中打开</a>
-              </p>
+              <div style={{ textAlign: 'center', padding: '40px 0', background: '#fafafa', borderRadius: 8 }}>
+                <Button type="primary" size="large" icon={<EyeOutlined />}
+                  href={secureIframeUrl} target="_blank" rel="noopener noreferrer">
+                  在新窗口查看卡信息
+                </Button>
+                <p style={{ fontSize: 12, color: '#999', marginTop: 16 }}>
+                  安全页面将在新窗口打开。请勿在公共设备上查看。<br/>
+                  如无法自动打开，请检查浏览器是否阻止了弹窗。
+                </p>
+              </div>
             </>
           )}
         </Spin>
