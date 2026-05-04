@@ -777,27 +777,34 @@ export class UqPaySDK {
   }
 
   /**
-   * 冻结卡片
+   * 冻结卡片（UQPay 不支持 card_status=FROZEN，通过设置 spending_controls 单笔限额为 0 等效冻结）
    */
   async freezeCard(cardId: string): Promise<void> {
-    await this.updateCardStatus(cardId, 'FROZEN');
-    console.log('[UqPay] 卡片已冻结:', cardId);
+    await this.request<any>('POST', `/api/v1/issuing/cards/${cardId}`, {
+      spending_controls: [{ interval: 'PER_TRANSACTION', amount: '0' }],
+    });
+    console.log('[UqPay] 卡片已冻结(spending=0):', cardId.slice(-4));
   }
 
   /**
-   * 解冻卡片（恢复为 ACTIVE）
+   * 解冻卡片（将 spending_controls 恢复为默认单笔限额）
    */
   async unfreezeCard(cardId: string): Promise<void> {
-    await this.updateCardStatus(cardId, 'ACTIVE');
-    console.log('[UqPay] 卡片已解冻:', cardId);
+    await this.request<any>('POST', `/api/v1/issuing/cards/${cardId}`, {
+      spending_controls: [{ interval: 'PER_TRANSACTION', amount: '10000' }],
+    });
+    console.log('[UqPay] 卡片已解冻(spending=10000):', cardId.slice(-4));
   }
 
   /**
-   * 取消卡片
+   * 取消卡片（UQPay 官方 update-card 不支持 card_status:CANCELLED，
+   * 通过 spending_controls=0 防止后续消费）
    */
   async cancelCard(cardId: string): Promise<void> {
-    await this.updateCardStatus(cardId, 'CANCELLED');
-    console.log('[UqPay] 卡片已取消:', cardId);
+    await this.request<any>('POST', `/api/v1/issuing/cards/${cardId}`, {
+      spending_controls: [{ interval: 'PER_TRANSACTION', amount: '0' }],
+    });
+    console.log('[UqPay] 卡片已取消(spending=0):', cardId.slice(-4));
   }
 
   /**
@@ -887,6 +894,57 @@ export class UqPaySDK {
       balance_after: raw.balance_after != null ? Number(raw.balance_after) : undefined,
       card_available_balance: raw.card_available_balance != null ? Number(raw.card_available_balance) : undefined,
       balance_id: raw.balance_id || options.balanceId || undefined,
+      raw_json: raw,
+    };
+  }
+
+  // ── 余额转出 ─────────────────────────────────────────────────────────────
+
+  /**
+   * 卡余额提现（Withdraw funds from the card into the account balance）
+   *
+   * API: POST /api/v1/issuing/cards/{cardId}/withdraw
+   * 文档: https://docs.uqpay.com/reference/card-withdraw
+   *
+   * 安全约束:
+   * - 不使用 card_number / PAN
+   * - 不保存 CVV
+   * - 不输出 token / clientId / apiKey
+   *
+   * @param cardId          卡片 UUID（来自 UQPay，非本地 cards.id）
+   * @param amount          提现金额（正数，> 0）
+   * @param idempotencyKey  幂等键（由调用方生成，防止重复提现）
+   *
+   * @returns UqPayRechargeResponse（复用充值响应结构）
+   */
+  async withdrawCard(
+    cardId: string,
+    amount: number,
+    idempotencyKey: string
+  ): Promise<UqPayRechargeResponse> {
+    const raw = await this.request<any>(
+      'POST',
+      `/api/v1/issuing/cards/${cardId}/withdraw`,
+      { amount },
+      { 'x-idempotency-key': idempotencyKey }
+    );
+
+    const cardOrderId = raw.card_order_id || raw.order_id || '';
+    const orderStatus = (raw.order_status || raw.status || 'PENDING').toUpperCase();
+    return {
+      card_id: raw.card_id || raw.id || cardId,
+      card_order_id: cardOrderId,
+      order_type: raw.order_type || 'WITHDRAW',
+      amount: Number(raw.amount ?? amount),
+      card_currency: raw.card_currency || raw.currency || 'USD',
+      order_status: (orderStatus === 'SUCCESS' || orderStatus === 'FAILED' || orderStatus === 'PENDING'
+        ? orderStatus : 'PENDING') as 'PENDING' | 'SUCCESS' | 'FAILED',
+      create_time: raw.create_time || raw.created_at || '',
+      update_time: raw.update_time || raw.updated_at || '',
+      complete_time: raw.complete_time || (orderStatus === 'SUCCESS' ? (raw.update_time || '') : ''),
+      balance_after: raw.balance_after != null ? Number(raw.balance_after) : undefined,
+      card_available_balance: raw.card_available_balance != null ? Number(raw.card_available_balance) : undefined,
+      balance_id: undefined,
       raw_json: raw,
     };
   }

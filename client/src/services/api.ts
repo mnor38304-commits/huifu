@@ -68,6 +68,7 @@ export const getPanToken = (id: number) => api.get<{
 }>(`/cards/${id}/pan-token`)
 export const revealCard = (id: number) => api.get(`/cards/${id}/reveal`)
 export const topupCard = (id: number, amount: number) => api.post(`/cards/${id}/topup`, { amount })
+export const withdrawCard = (id: number, amount: number) => api.post(`/cards/${id}/withdraw`, { amount })
 export const freezeCard = (id: number) => api.post(`/cards/${id}/freeze`)
 export const unfreezeCard = (id: number) => api.post(`/cards/${id}/unfreeze`)
 export const cancelCard = (id: number) => api.post(`/cards/${id}/cancel`)

@@ -345,6 +345,68 @@ export class GeoSdk {
     };
   }
 
+  // ── 充值 ──────────────────────────────────────────────────────────────
+
+  /**
+   * 卡充值
+   * POST /openapi/vcc/card/recharge
+   */
+  async rechargeCard(cardId: string, amount: number, userReqNo: string): Promise<{ orderId: string }> {
+    const data: any = await this.request('POST', '/openapi/vcc/card/recharge', {
+      userReqNo,
+      authLimitAmount: amount,
+      channelType: '1',
+      cardId,
+    });
+    return { orderId: data.orderId || '' };
+  }
+
+  // ── 余额转出 ─────────────────────────────────────────────────────────
+
+  /**
+   * 卡余额转出
+   * POST /openapi/vcc/card/refund
+   * 注: GEO 余额转出字段名为 refundAmount（不是 amount）
+   */
+  async refundCard(cardId: string, amount: number, userReqNo: string): Promise<{ orderId: string }> {
+    const data: any = await this.request('POST', '/openapi/vcc/card/refund', {
+      userReqNo,
+      refundAmount: amount,
+      channelType: '1',
+      cardId,
+    });
+    return { orderId: data.orderId || '' };
+  }
+
+  // ── 销卡 ─────────────────────────────────────────────────────────────
+
+  /**
+   * 销卡
+   * POST /openapi/vcc/card/close
+   */
+  async closeCard(cardId: string, userReqNo: string): Promise<{ orderId: string }> {
+    const data: any = await this.request('POST', '/openapi/vcc/card/close', {
+      cardId,
+      userReqNo,
+    });
+    return { orderId: data.orderId || '' };
+  }
+
+  // ── 交易查询 ─────────────────────────────────────────────────────────
+
+  /**
+   * 交易查询
+   * POST /openapi/vcc/trans/query
+   */
+  async getTransactions(cardId: string, currentPage: number = 1, pageSize: number = 20): Promise<any> {
+    return this.request('POST', '/openapi/vcc/trans/query', {
+      currentPage,
+      cardType: '1',
+      pageSize,
+      cardId,
+    });
+  }
+
   // ── 状态映射 ──────────────────────────────────────────────────────────
 
   /**

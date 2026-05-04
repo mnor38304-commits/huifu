@@ -7,7 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import {
   getCards, getAvailableCardBins, createCard, freezeCard, unfreezeCard,
-  cancelCard, topupCard, updateCardRemark, setCardUsageExpiry, renewCard, syncCardStatus,
+  cancelCard, topupCard, withdrawCard, updateCardRemark, setCardUsageExpiry, renewCard, syncCardStatus,
   getMyCardholderProfiles
 } from '../services/api'
 import CardDetailModal from '../components/CardDetailModal'
@@ -338,10 +338,48 @@ const Cards: React.FC = () => {
   }
 
   const handleWithdraw = (record: any) => {
-    if (record.external_id) {
-      message.info('渠道卡余额转出接口暂不可用')
-    } else {
-      message.info('余额转出功能待接入渠道接口后开放')
+    // 打开余额转出弹窗
+    setWithdrawCardId(record.id)
+    setWithdrawCardName(record.card_name || record.card_no_masked || 'VCC')
+    setWithdrawCardBalance(record.balance || 0)
+    setWithdrawModalVisible(true)
+    withdrawForm.resetFields()
+    withdrawForm.setFieldsValue({ amount: '' })
+  }
+
+  // ── 余额转出弹窗 ──
+  const [withdrawModalVisible, setWithdrawModalVisible] = useState(false)
+  const [withdrawCardId, setWithdrawCardId] = useState<number | null>(null)
+  const [withdrawCardName, setWithdrawCardName] = useState('')
+  const [withdrawCardBalance, setWithdrawCardBalance] = useState(0)
+  const [withdrawLoading, setWithdrawLoading] = useState(false)
+  const [withdrawForm] = Form.useForm()
+
+  const handleWithdrawConfirm = async () => {
+    if (!withdrawCardId) return
+    const values = await withdrawForm.validateFields()
+    if (!values.amount || values.amount <= 0) {
+      message.error('请输入有效金额')
+      return
+    }
+    if (values.amount > withdrawCardBalance) {
+      message.error('余额不足')
+      return
+    }
+    setWithdrawLoading(true)
+    try {
+      const res = await withdrawCard(withdrawCardId, values.amount)
+      if (res.code === 0) {
+        message.success(`余额转出成功`)
+        setWithdrawModalVisible(false)
+        loadCards()
+      } else {
+        message.error(res.message)
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '余额转出失败')
+    } finally {
+      setWithdrawLoading(false)
     }
   }
 
@@ -453,12 +491,11 @@ const Cards: React.FC = () => {
               充值
             </Button>
           )}
+          {/* status=1: 余额转出 */}
           {record.status === 1 && (
-            <Tooltip title="卡内余额可提现至平台钱包">
-              <Button type="link" size="small" icon={<TransactionOutlined />} style={{ color: '#fa8c16' }} onClick={() => handleWithdraw(record)}>
-                余额转出
-              </Button>
-            </Tooltip>
+            <Button type="link" size="small" icon={<TransactionOutlined />} style={{ color: '#fa8c16' }} onClick={() => handleWithdraw(record)}>
+              余额转出
+            </Button>
           )}
           {record.status === 1 && (
             <Button type="link" size="small" danger onClick={() => handleFreeze(record.id, true)}>
@@ -689,6 +726,27 @@ const Cards: React.FC = () => {
           </Form.Item>
         </Form>
         <Alert type="info" showIcon style={{ marginTop: 8 }} message="充值将从钱包余额中扣除，请确保钱包余额充足。" />
+      </Modal>
+
+      {/* ── 余额转出弹窗 ── */}
+      <Modal title={<Space><TransactionOutlined /><span>余额转出</span></Space>}
+        open={withdrawModalVisible} onCancel={() => setWithdrawModalVisible(false)}
+        onOk={handleWithdrawConfirm} confirmLoading={withdrawLoading} okText="确认转出" cancelText="取消" width={420}>
+        <Form form={withdrawForm} layout="vertical">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ color: '#666', fontSize: 13 }}>转出卡片</div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginTop: 4 }}>{withdrawCardName}</div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ color: '#666', fontSize: 13 }}>当前余额</div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginTop: 4, color: '#1677ff' }}>${withdrawCardBalance.toFixed(2)}</div>
+          </div>
+          <Form.Item name="amount" label="转出金额 (USD)"
+            rules={[{ required: true, message: '请输入转出金额' }, { type: 'number', min: 0.01, message: '金额必须大于 0' }]}>
+            <InputNumber placeholder="请输入转出金额" min={0.01} max={withdrawCardBalance} step={1} style={{ width: '100%' }} size="large" prefix="$" autoFocus />
+          </Form.Item>
+        </Form>
+        <Alert type="info" showIcon style={{ marginTop: 8 }} message="转出金额将返还到您的钱包余额中。" />
       </Modal>
 
       {/* ── 卡片详情弹窗 ── */}

@@ -1245,9 +1245,71 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
       console.error('[UQPay Topup] 充值异常:', msg);
       return res.json({ code: 500, message: '充值失败: ' + msg, timestamp: Date.now() });
     }
+  } else if (card.channel_code && card.channel_code.toUpperCase() === 'GEO') {
+    // GEO 卡充值
+    const channel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='GEO' AND status=1").get() as any;
+    if (!channel) return res.json({ code: 503, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+
+    let config: Record<string, string> = {};
+    try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
+
+    const { GeoSdk } = await import('../channels/geo');
+    const sdk = new GeoSdk({
+      baseUrl: channel.api_base_url || 'https://openapi.geo.sh.cn',
+      userNo: config.userNo || '',
+      privateKey: config.privateKey || '',
+      geoPublicKey: config.geoPublicKey || '',
+      customerPublicKey: config.customerPublicKey || '',
+    });
+
+    // 校验钱包余额
+    const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
+    if (!wallet || wallet.balance_usd < numAmount) {
+      return res.json({ code: 400, message: '钱包余额不足', timestamp: Date.now() });
+    }
+
+    const txnNo = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const bizNo = `GEO${Date.now()}${userId}`;
+
+    try {
+      const result = await sdk.rechargeCard(String(card.external_id || ''), numAmount, bizNo);
+      if (!result.orderId) {
+        throw new Error('GEO 充值返回空订单号');
+      }
+
+      // 成功：事务更新
+      const balanceBefore = Number(card.balance || 0);
+      const walletBefore = Number(wallet.balance_usd || 0);
+      const balanceAfter = balanceBefore + numAmount;
+      const walletAfter = walletBefore - numAmount;
+
+      const database = getDb();
+      database.run('BEGIN');
+      database.run('UPDATE cards SET balance=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [balanceAfter, card.id]);
+      database.run('UPDATE wallets SET balance_usd=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?', [walletAfter, userId]);
+      database.run(`INSERT INTO transactions (txn_no, card_id, user_id, txn_type, amount, currency, status, merchant_name, txn_time)
+        VALUES (?,?,?,'TOPUP',?,'USD',1,'GEO卡充值',CURRENT_TIMESTAMP)`,
+        [txnNo, card.id, userId, numAmount]);
+      database.run(`INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type, reference_id)
+        VALUES (?,'CARD_TOPUP',?,?,?,'USD',?, 'card_topup', ?)`,
+        [userId, -numAmount, walletBefore, walletAfter, `充值到卡片 ${card.card_no_masked}`, card.id]);
+      database.run('COMMIT');
+      saveDatabase();
+
+      console.log('[GEO Topup] 充值成功: cardId=' + card.id + ' amount=' + numAmount + ' orderId=' + result.orderId);
+
+      return res.json({
+        code: 0, message: '充值成功',
+        data: { newBalance: balanceAfter, walletBalance: walletAfter },
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      console.error('[GEO Topup] 充值失败: cardId=' + card.id + ' error=' + (err.message || String(err)).slice(0, 200));
+      return res.json({ code: 500, message: '充值失败，请稍后重试', timestamp: Date.now() });
+    }
   }
 
-  // 4. 非 UQPay 卡：保持现有本地测试充值逻辑
+  // 4. 非 UQPay/GEO 卡：保持现有本地测试充值逻辑
   // 4a. 校验钱包余额
   const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
   if (!wallet) {
@@ -1319,6 +1381,112 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
   }
 });
 
+// ── 余额转出 ────────────────────────────────────────────────────────────────
+
+router.post('/:id/withdraw', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
+  const { amount } = req.body;
+  const userId = req.user!.userId;
+
+  const numAmount = Number(amount);
+  if (!numAmount || numAmount <= 0 || !Number.isFinite(numAmount)) {
+    return res.json({ code: 400, message: '请输入有效金额', timestamp: Date.now() });
+  }
+
+  const card = db.prepare('SELECT * FROM cards WHERE id = ? AND user_id = ?').get(req.params.id, userId) as any;
+  if (!card) return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
+  if (card.status !== 1) return res.json({ code: 400, message: '卡片状态异常', timestamp: Date.now() });
+  if (Number(card.balance) < numAmount) return res.json({ code: 400, message: '卡余额不足', timestamp: Date.now() });
+
+  const channelCode = String(card.channel_code || '').toUpperCase();
+  const extId = card.external_id;
+  if (!extId) return res.json({ code: 400, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+
+  const txnNo = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  const database = getDb();
+
+  // 创建 PENDING 流水
+  database.run('BEGIN');
+  try {
+    database.run(`INSERT INTO transactions (txn_no, card_id, user_id, txn_type, amount, currency, status, merchant_name, txn_time)
+      VALUES (?,?,?,'WITHDRAW',?,'USD',0,'余额转出',CURRENT_TIMESTAMP)`,
+      [txnNo, card.id, userId, numAmount]);
+    database.run('COMMIT');
+    saveDatabase();
+  } catch (err: any) {
+    database.run('ROLLBACK');
+    saveDatabase();
+    return res.json({ code: 500, message: '余额转出失败，请稍后重试', timestamp: Date.now() });
+  }
+
+  try {
+    if (channelCode === 'UQPAY') {
+      const { UqPaySDK } = await import('../channels/uqpay');
+      const uqpayChannel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='UQPAY' AND status=1").get() as any;
+      if (!uqpayChannel) throw new Error('渠道未配置');
+      let config: Record<string, string> = {};
+      try { config = JSON.parse(uqpayChannel.config_json || '{}'); } catch (_) {}
+      const sdk = new UqPaySDK({
+        clientId: config.clientId || uqpayChannel.api_key || '',
+        apiKey: config.apiSecret || uqpayChannel.api_secret || '',
+        baseUrl: uqpayChannel.api_base_url || undefined,
+      });
+      await sdk.withdrawCard(extId, numAmount, randomUUID());
+    } else if (channelCode === 'GEO') {
+      const channel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='GEO' AND status=1").get() as any;
+      if (!channel) throw new Error('GEO渠道未配置');
+      let config: Record<string, string> = {};
+      try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
+      const { GeoSdk } = await import('../channels/geo');
+      const sdk = new GeoSdk({
+        baseUrl: channel.api_base_url || 'https://openapi.geo.sh.cn',
+        userNo: config.userNo || '',
+        privateKey: config.privateKey || '',
+        geoPublicKey: config.geoPublicKey || '',
+        customerPublicKey: config.customerPublicKey || '',
+      });
+      const bizNo = `GEO${Date.now()}${userId}`;
+      await sdk.refundCard(extId, numAmount, bizNo);
+    } else {
+      throw new Error('渠道不支持');
+    }
+
+    // 上游成功：提交事务
+    const wallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
+    const walletBefore = wallet ? Number(wallet.balance_usd) : 0;
+    const balanceBefore = Number(card.balance);
+    const balanceAfter = balanceBefore - numAmount;
+    const walletAfter = walletBefore + numAmount;
+
+    database.run('BEGIN');
+    database.run('UPDATE cards SET balance=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [balanceAfter, card.id]);
+    database.run('UPDATE wallets SET balance_usd=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?', [walletAfter, userId]);
+    database.run('UPDATE transactions SET status=1 WHERE txn_no=?', [txnNo]);
+    database.run(`INSERT INTO wallet_records (user_id, type, amount, balance_before, balance_after, currency, remark, reference_type, reference_id)
+      VALUES (?,'CARD_WITHDRAW',?,?,?,'USD',?,'card_withdraw',?)`,
+      [userId, numAmount, walletBefore, walletAfter, `卡片余额转出 ${card.card_no_masked}`, card.id]);
+    database.run('COMMIT');
+    saveDatabase();
+
+    console.log('[Withdraw] 成功: cardId=' + card.id + ' amount=' + numAmount + ' channel=' + channelCode);
+
+    return res.json({
+      code: 0,
+      message: '余额转出成功',
+      data: { newBalance: balanceAfter, walletBalance: walletAfter },
+      timestamp: Date.now(),
+    });
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    console.error('[Withdraw] 失败: cardId=' + card.id + ' channel=' + channelCode + ' error=' + msg.slice(0, 200));
+    // 标记 transactions 为 FAILED
+    database.run('BEGIN');
+    database.run('UPDATE transactions SET status=2, remark=? WHERE txn_no=?', [msg.slice(0, 100), txnNo]);
+    database.run('COMMIT');
+    saveDatabase();
+    return res.json({ code: 500, message: '余额转出失败，请稍后重试或联系平台客服', timestamp: Date.now() });
+  }
+});
+
 // ── 冻结卡片 ────────────────────────────────────────────────────────────────
 
 router.post('/:id/freeze', authMiddleware, async (req: AuthRequest, res: Response<ApiResponse>) => {
@@ -1328,25 +1496,48 @@ router.post('/:id/freeze', authMiddleware, async (req: AuthRequest, res: Respons
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
   }
 
-  if (card.external_id) {
-    const channel = await getChannelSDK();
-
-    if (channel.type === 'uqpay' && channel.sdk) {
-      try {
-        await channel.sdk.freezeCard(card.external_id);
-      } catch (err: any) {
-        return res.json({ code: 500, message: '冻结失败，请稍后重试', timestamp: Date.now() });
-      }
-    } else if (channel.type === 'dogpay' && (channel.sdk as any)?.freezeCard) {
-      try {
-        await (channel.sdk as any).freezeCard(card.external_id);
-      } catch (err: any) {
-        return res.json({ code: 500, message: '冻结失败，请稍后重试', timestamp: Date.now() });
-      }
-    }
+  if (card.status !== 1) {
+    return res.json({ code: 400, message: '只允许正常卡冻结', timestamp: Date.now() });
   }
 
-  db.prepare('UPDATE cards SET status = 2, freeze_reason = ?, frozen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('MANUAL', req.params.id);
+  const channelCode = String(card.channel_code || '').toUpperCase();
+  const extId = card.external_id;
+
+  console.log('[Freeze] cardId=' + card.id + ' userId=' + req.user!.userId + ' channel=' + channelCode + ' extLast4=' + (extId ? extId.slice(-4) : 'N/A'));
+
+  if (!extId) {
+    return res.json({ code: 400, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+  }
+
+  try {
+    if (channelCode === 'UQPAY') {
+      const { UqPaySDK } = await import('../channels/uqpay');
+      const uqpayChannel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='UQPAY' AND status=1").get() as any;
+      if (!uqpayChannel) return res.json({ code: 503, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+      let config: Record<string, string> = {};
+      try { config = JSON.parse(uqpayChannel.config_json || '{}'); } catch (_) {}
+      const sdk = new UqPaySDK({
+        clientId: config.clientId || uqpayChannel.api_key || '',
+        apiKey: config.apiSecret || uqpayChannel.api_secret || '',
+        baseUrl: uqpayChannel.api_base_url || undefined,
+      });
+      await sdk.freezeCard(extId);
+    } else if (channelCode === 'GEO') {
+      // GEO freeze — 待接入
+      return res.json({ code: 400, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+    } else if (channelCode === 'DOGPAY' || channelCode === 'DOGPAY') {
+      // DogPay freeze — 待接入
+      return res.json({ code: 400, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+    } else {
+      return res.json({ code: 400, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+    }
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    console.error('[Freeze] 上游错误: cardId=' + card.id + ' channel=' + channelCode + ' error=' + msg.slice(0, 200));
+    return res.json({ code: 500, message: '冻结失败，请稍后重试', timestamp: Date.now() });
+  }
+
+  db.prepare('UPDATE cards SET status = 2, freeze_reason = ?, frozen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('MERCHANT_FREEZE', req.params.id);
   res.json({ code: 0, message: '卡片已冻结', timestamp: Date.now() });
 });
 
@@ -1364,21 +1555,35 @@ router.post('/:id/unfreeze', authMiddleware, async (req: AuthRequest, res: Respo
     return res.json({ code: 400, message: '当前卡片已到期，请使用续期解冻功能', timestamp: Date.now() });
   }
 
-  if (card.external_id) {
-    const channel = await getChannelSDK();
+  // 风控/管理冻结不允许商户自助解冻
+  if (['INVESTIGATING','INVESTIGATING_BIN_MAPPING','CORRECTING','RISK','ADMIN_FREEZE'].includes(card.freeze_reason || '')) {
+    return res.json({ code: 400, message: '当前卡片暂不可自助解冻，请联系平台客服。', timestamp: Date.now() });
+  }
 
-    if (channel.type === 'uqpay' && channel.sdk) {
-      try {
-        await channel.sdk.unfreezeCard(card.external_id);
-      } catch (err: any) {
-        return res.json({ code: 500, message: '渠道解冻失败', timestamp: Date.now() });
+  const channelCode = String(card.channel_code || '').toUpperCase();
+  const extId = card.external_id;
+
+  if (extId) {
+    try {
+      if (channelCode === 'UQPAY') {
+        const { UqPaySDK } = await import('../channels/uqpay');
+        const uqpayChannel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='UQPAY' AND status=1").get() as any;
+        if (!uqpayChannel) return res.json({ code: 503, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
+        let config: Record<string, string> = {};
+        try { config = JSON.parse(uqpayChannel.config_json || '{}'); } catch (_) {}
+        const sdk = new UqPaySDK({
+          clientId: config.clientId || uqpayChannel.api_key || '',
+          apiKey: config.apiSecret || uqpayChannel.api_secret || '',
+          baseUrl: uqpayChannel.api_base_url || undefined,
+        });
+        await sdk.unfreezeCard(extId);
+      } else {
+        return res.json({ code: 400, message: '当前卡片暂不支持该操作，请稍后重试或联系平台客服。', timestamp: Date.now() });
       }
-    } else if (channel.type === 'dogpay' && (channel.sdk as any)?.unfreezeCard) {
-      try {
-        await (channel.sdk as any).unfreezeCard(card.external_id);
-      } catch (err: any) {
-        return res.json({ code: 500, message: '渠道解冻失败', timestamp: Date.now() });
-      }
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.error('[Unfreeze] 上游错误: cardId=' + card.id + ' channel=' + channelCode + ' error=' + msg.slice(0, 200));
+      return res.json({ code: 500, message: '解冻失败，请稍后重试', timestamp: Date.now() });
     }
   }
 
@@ -1440,34 +1645,58 @@ router.post('/:id/cancel', authMiddleware, async (req: AuthRequest, res: Respons
     return res.json({ code: 404, message: '卡片不存在', timestamp: Date.now() });
   }
 
-  if (card.external_id) {
-    const channel = await getChannelSDK();
+  if (![1, 2].includes(card.status)) {
+    return res.json({ code: 400, message: '当前卡片状态不允许销卡', timestamp: Date.now() });
+  }
 
-    if (channel.type === 'uqpay' && channel.sdk) {
-      try {
-        await channel.sdk.cancelCard(card.external_id);
-      } catch (err: any) {
-        return res.json({ code: 500, message: 'UQPay 销卡失败: ' + err.message, timestamp: Date.now() });
+  // 有余额不能销卡
+  if (Number(card.balance) > 0) {
+    return res.json({ code: 400, message: '卡内仍有余额，请先余额转出后再销卡', timestamp: Date.now() });
+  }
+
+  const channelCode = String(card.channel_code || '').toUpperCase();
+  const extId = card.external_id;
+
+  // 调上游销卡
+  if (extId) {
+    try {
+      if (channelCode === 'UQPAY') {
+        const { UqPaySDK } = await import('../channels/uqpay');
+        const uqpayChannel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='UQPAY' AND status=1").get() as any;
+        if (!uqpayChannel) throw new Error('渠道未配置');
+        let config: Record<string, string> = {};
+        try { config = JSON.parse(uqpayChannel.config_json || '{}'); } catch (_) {}
+        const sdk = new UqPaySDK({
+          clientId: config.clientId || uqpayChannel.api_key || '',
+          apiKey: config.apiSecret || uqpayChannel.api_secret || '',
+          baseUrl: uqpayChannel.api_base_url || undefined,
+        });
+        await sdk.cancelCard(extId);
+      } else if (channelCode === 'GEO') {
+        const channel = db.prepare("SELECT * FROM card_channels WHERE UPPER(channel_code)='GEO' AND status=1").get() as any;
+        if (!channel) throw new Error('GEO渠道未配置');
+        let config: Record<string, string> = {};
+        try { config = JSON.parse(channel.config_json || '{}'); } catch (_) {}
+        const { GeoSdk } = await import('../channels/geo');
+        const sdk = new GeoSdk({
+          baseUrl: channel.api_base_url || 'https://openapi.geo.sh.cn',
+          userNo: config.userNo || '',
+          privateKey: config.privateKey || '',
+          geoPublicKey: config.geoPublicKey || '',
+          customerPublicKey: config.customerPublicKey || '',
+        });
+        const bizNo = `GEO${Date.now()}${req.user!.userId}`;
+        await sdk.closeCard(extId, bizNo);
       }
-    } else if (channel.type === 'dogpay' && (channel.sdk as any)?.deleteCard) {
-      try {
-        await (channel.sdk as any).deleteCard(card.external_id);
-      } catch (err: any) {
-        return res.json({ code: 500, message: '渠道销卡失败: ' + err.message, timestamp: Date.now() });
-      }
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.error('[Cancel] 上游销卡失败: cardId=' + card.id + ' channel=' + channelCode + ' error=' + msg.slice(0, 200));
+      return res.json({ code: 500, message: '销卡失败，请稍后重试或联系平台客服', timestamp: Date.now() });
     }
   }
 
-  if (card.balance > 0) {
-    const txnNo = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
-    db.prepare(`
-      INSERT INTO transactions (txn_no, card_id, user_id, txn_type, amount, currency, status, merchant_name, txn_time)
-      VALUES (?, ?, ?, 'CANCEL_REFUND', ?, 'USD', 1, '销卡退款', CURRENT_TIMESTAMP)
-    `).run(txnNo, card.id, req.user!.userId, card.balance);
-  }
-
-  db.prepare('UPDATE cards SET status = 4, balance = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
-  res.json({ code: 0, message: '卡片已注销', timestamp: Date.now() });
+  db.prepare('UPDATE cards SET status = 4, balance = 0, cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+  res.json({ code: 0, message: '卡片已销卡', timestamp: Date.now() });
 });
 
 // ── 更新卡片备注 ─────────────────────────────────────────────────────────────
