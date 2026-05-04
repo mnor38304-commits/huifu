@@ -386,6 +386,11 @@ const Cards: React.FC = () => {
       title: '卡面有效期',
       dataIndex: 'expire_date',
       key: 'expire_date',
+      render: (text: string, record: any) => {
+        if (text && text !== '待生成') return text
+        if (record.status === 0) return <span style={{ color: '#999' }}>待生成</span>
+        return <span style={{ color: '#faad14' }}>待同步</span>
+      },
     },
     {
       title: '余额',
