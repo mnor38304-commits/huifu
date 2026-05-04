@@ -1072,9 +1072,13 @@ export class UqPaySDK {
     expiresIn: number;
     expiresAt: string;
   }> {
+    // UQPay token API 拒绝含连字符的 UUID 格式 idempotency key
+    const cleanKey = randomUUID().replace(/-/g, '');
     const res = await this.request<{ token: string; expires_in: number; expires_at: string }>(
       'POST',
-      `/api/v1/issuing/cards/${cardId}/token`
+      `/api/v1/issuing/cards/${cardId}/token`,
+      {},
+      { 'x-idempotency-key': cleanKey }
     );
     return {
       token: res.token,

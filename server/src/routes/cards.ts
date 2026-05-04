@@ -1688,6 +1688,10 @@ router.post('/:id/sync-status', authMiddleware, async (req: AuthRequest, res: Re
       let newExpire = card.expire_date;
       if (detail.expiry_year && detail.expiry_month) {
         newExpire = `${detail.expiry_year}-${detail.expiry_month.padStart(2, '0')}`;
+      } else if (newStatus === 1 && (!newExpire || newExpire === '待生成')) {
+        // UQPay getCard 不返回 expiry，ACTIVE 后标记"待同步"
+        newExpire = '待同步';
+        console.log('[Sync] cardId=' + req.params.id + ' UQPay ACTIVE but no expiry -> 待同步');
       }
 
       // 更新 balance（UQPay card_available_balance 是余额，不是限额）
