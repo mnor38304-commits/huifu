@@ -215,8 +215,10 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
   const { cardNo, failedCount, remark, status, createdStart, createdEnd } = req.query;
 
   let sql = `SELECT c.id, c.card_no_masked, c.card_name, c.card_type, c.currency, c.balance,
-    c.credit_limit, c.single_limit, c.daily_limit, c.status, c.expire_date, c.purpose,
-    c.created_at, c.bin_id, c.channel_code, c.remark,
+    c.credit_limit, c.single_limit, c.daily_limit, c.status, c.purpose,
+    c.created_at, c.bin_id, c.remark,
+    c.usage_expires_at, c.auto_frozen_at, c.auto_frozen_reason,
+    c.freeze_reason,
     c.usage_expires_at, c.auto_frozen_at, c.auto_frozen_reason,
     c.freeze_reason,
     COALESCE(f.failed_count, 0) as failed_count
@@ -262,7 +264,11 @@ router.get('/', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) =
   sql += ' ORDER BY c.created_at DESC';
 
   const rows = db.prepare(sql).all(...params);
-  const cards = rows.map((r: any) => ({ ...r, cvv: '***' }));
+  // 商户端不返回 CVV / expire_date / channel_code
+  const cards = rows.map((r: any) => {
+    const { cvv, expire_date, channel_code, ...safe } = r;
+    return safe;
+  });
 
   res.json({ code: 0, message: 'success', data: cards, timestamp: Date.now() });
 });
@@ -697,14 +703,14 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response<ApiRespo
   });
 });
 
-// ── 卡片详情 ────────────────────────────────────────────────────────────────
+  // ── 卡片详情 ────────────────────────────────────────────────────────────────
 
 router.get('/:id', authMiddleware, (req: AuthRequest, res: Response<ApiResponse>) => {
   freezeExpiredCardsForUser(req.user!.userId);
   const card = db.prepare(`
     SELECT id, card_no_masked, card_name, card_type, currency, balance,
-      credit_limit, single_limit, daily_limit, status, expire_date, purpose,
-      created_at, channel_code, external_id, remark,
+      credit_limit, single_limit, daily_limit, status, purpose,
+      created_at, remark,
       usage_expires_at, auto_frozen_at, auto_frozen_reason
     FROM cards WHERE id = ? AND user_id = ?
   `).get(req.params.id, req.user!.userId);
@@ -800,9 +806,8 @@ router.get('/:id/detail', authMiddleware, (req: AuthRequest, res: Response<ApiRe
       status: card.status,
       statusText: statusMap[card.status] || '未知',
       cardNumberMasked: card.card_no_masked,
-      expiryMasked: card.expire_date ? (card.expire_date.includes('/') ? card.expire_date : '**/**') : '**/**',
-      cvvMasked: '***',
       balance: card.balance || 0,
+      creditLimit: card.credit_limit || 0,
       totalSpendAmount: totalSpend,
       totalTopupAmount: totalTopup,
       failedTxnCount,

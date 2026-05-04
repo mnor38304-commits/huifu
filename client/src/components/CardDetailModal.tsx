@@ -402,26 +402,8 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                       <span style={{ fontSize: 12 }}>{(detail.cardId || '-').slice(0, 12)}...</span>
                     </Tooltip>
                   </Descriptions.Item>
-                  <Descriptions.Item label="有效期">
-                    <span style={{ fontFamily: "'Courier New', monospace", fontWeight: 600 }}>
-                      {displayExpiry}
-                    </span>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="累计消费">
-                    <span style={{ fontWeight: 600, color: '#1677ff' }}>
-                      ${Number(detail.totalSpendAmount).toFixed(2)}
-                    </span>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="累计转入金额">
-                    <span style={{ fontWeight: 600, color: '#52c41a' }}>
-                      ${Number(detail.totalTopupAmount).toFixed(2)}
-                    </span>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="CVV">
-                    <span style={{ fontFamily: "'Courier New', monospace", fontWeight: 600, letterSpacing: 2 }}>
-                      {displayCvv}
-                    </span>
-                  </Descriptions.Item>
+                  <Descriptions.Item label="累计消费">  <span style={{ fontWeight: 600, color: '#1677ff' }}>${Number(detail.totalSpendAmount).toFixed(2)}</span></Descriptions.Item>
+                  <Descriptions.Item label="累计转入金额">  <span style={{ fontWeight: 600, color: '#52c41a' }}>${Number(detail.totalTopupAmount).toFixed(2)}</span></Descriptions.Item>
                   <Descriptions.Item label="失败订单数">
                     <span style={{ color: (detail.failedTxnCount || 0) > 0 ? '#ff4d4f' : '#999' }}>
                       {detail.failedTxnCount || 0}

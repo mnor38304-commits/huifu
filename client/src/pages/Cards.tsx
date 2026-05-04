@@ -383,23 +383,6 @@ const Cards: React.FC = () => {
       )
     },
     {
-      title: 'CVV',
-      dataIndex: 'cvv',
-      key: 'cvv',
-      width: 60,
-      render: () => <span style={{ fontFamily: "'Courier New', monospace", letterSpacing: 2, color: '#999' }}>***</span>,
-    },
-    {
-      title: '卡面有效期',
-      dataIndex: 'expire_date',
-      key: 'expire_date',
-      render: (text: string, record: any) => {
-        if (text && text !== '待生成') return text
-        if (record.status === 0) return <span style={{ color: '#999' }}>待生成</span>
-        return <span style={{ color: '#faad14' }}>待同步</span>
-      },
-    },
-    {
       title: '余额',
       dataIndex: 'balance',
       key: 'balance',
