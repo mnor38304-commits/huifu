@@ -172,27 +172,27 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
       const res = await revealCard(cardId);
       if (res.code === 0 && res.data) {
         if (res.data.mode === 'secure_iframe') {
-          // UQPay Secure iFrame 模式：先打开空白窗口，再请求 PAN Token 后跳转
+          // Secure iFrame 模式：请求 PAN Token 后直接在新窗口打开安全卡面
           setSecureIframeLoading(true);
-          const win = window.open('', '_blank', 'noopener,noreferrer');
           try {
             const tokenRes = await getPanToken(cardId);
-            const iframeUrl = tokenRes.data?.iframeUrl || tokenRes.data?.secureFrameUrl || tokenRes.data?.url;
-            if (tokenRes.code === 0 && iframeUrl) {
-              setSecureIframeUrl(iframeUrl);
-              setSecureIframeExpiresAt(tokenRes.data.expiresAt || null);
+            const payload = tokenRes?.data || tokenRes;
+            const secureUrl =
+              payload?.secureFrameUrl ||
+              payload?.secure_frame_url ||
+              payload?.iframeUrl ||
+              payload?.iframe_url ||
+              payload?.url ||
+              '';
+            if (tokenRes.code === 0 && secureUrl && /^https?:\/\//i.test(secureUrl)) {
+              setSecureIframeUrl(secureUrl);
+              setSecureIframeExpiresAt(payload?.expiresAt || null);
               setSecureIframeVisible(true);
-              if (win && !win.closed) {
-                win.location.href = iframeUrl;
-              } else {
-                message.warning('请允许弹窗，或在弹窗中点击按钮手动打开');
-              }
+              window.open(secureUrl, '_blank', 'noopener,noreferrer');
             } else {
-              if (win && !win.closed) win.close();
               message.error('卡片信息暂不可查看，请稍后重试或联系平台客服。');
             }
           } catch (err: any) {
-            if (win && !win.closed) win.close();
             message.error('卡片信息暂不可查看，请稍后重试或联系平台客服。');
           } finally {
             setSecureIframeLoading(false);
