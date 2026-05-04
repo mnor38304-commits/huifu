@@ -172,8 +172,9 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
       const res = await revealCard(cardId);
       if (res.code === 0 && res.data) {
         if (res.data.mode === 'secure_iframe') {
-          // UQPay Secure iFrame 模式：请求 PAN Token 并在新窗口打开安全页面
+          // UQPay Secure iFrame 模式：先打开空白窗口，再请求 PAN Token 后跳转
           setSecureIframeLoading(true);
+          const win = window.open('', '_blank', 'noopener,noreferrer');
           try {
             const tokenRes = await getPanToken(cardId);
             const iframeUrl = tokenRes.data?.iframeUrl || tokenRes.data?.secureFrameUrl || tokenRes.data?.url;
@@ -181,16 +182,18 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
               setSecureIframeUrl(iframeUrl);
               setSecureIframeExpiresAt(tokenRes.data.expiresAt || null);
               setSecureIframeVisible(true);
-              // 在新窗口打开安全页面
-              const win = window.open(iframeUrl, '_blank', 'noopener,noreferrer');
-              if (!win) {
-                message.warning('请允许弹窗，或在弹窗中点击链接手动打开');
+              if (win && !win.closed) {
+                win.location.href = iframeUrl;
+              } else {
+                message.warning('请允许弹窗，或在弹窗中点击按钮手动打开');
               }
             } else {
-              message.error('获取安全卡信息页面失败');
+              if (win && !win.closed) win.close();
+              message.error('卡片信息暂不可查看，请稍后重试或联系平台客服。');
             }
           } catch (err: any) {
-            message.error(err?.response?.data?.message || '获取安全卡信息页面失败');
+            if (win && !win.closed) win.close();
+            message.error('卡片信息暂不可查看，请稍后重试或联系平台客服。');
           } finally {
             setSecureIframeLoading(false);
           }
@@ -569,7 +572,7 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="完整卡号、有效期和 CVV 在安全卡面页面中展示。出于安全合规要求，不能在页面内嵌入，请在新窗口中查看。"
+                message="安全卡面将在新窗口打开，请在新页面中查看完整卡号、CVV 和有效期。"
               />
               {secureIframeExpiresAt && (
                 <p style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
