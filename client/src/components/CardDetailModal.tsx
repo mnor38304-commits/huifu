@@ -579,9 +579,14 @@ const CardDetailModal: React.FC<CardDetailModalProps> = ({ cardId, visible, onCl
                   border: '1px solid #eee',
                   borderRadius: 8,
                 }}
-                sandbox="allow-scripts allow-forms allow-same-origin"
+                sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
                 referrerPolicy="no-referrer"
+                onError={() => message.error('安全卡面加载失败，请在浏览器中手动打开')}
               />
+              <p style={{ fontSize: 12, color: '#999', marginTop: 8, textAlign: 'center' }}>
+                若安全页面无法加载，请
+                <a href={secureIframeUrl} target="_blank" rel="noopener noreferrer">在新窗口中打开</a>
+              </p>
             </>
           )}
         </Spin>
