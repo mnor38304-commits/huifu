@@ -317,7 +317,14 @@ const Cards: React.FC = () => {
     try {
       const res = await topupCard(topupCardId, values.amount)
       if (res.code === 0) {
-        message.success(`充值成功！新余额: $${res.data.newBalance?.toFixed(2)}`)
+        const newBalance = res?.data?.newCardBalance ?? res?.data?.newBalance
+        if (res.data?.orderStatus === 'PENDING') {
+          message.success('充值已提交，请稍后查询余额')
+        } else if (newBalance !== undefined && newBalance !== null) {
+          message.success(`充值成功！新余额 $${Number(newBalance).toFixed(2)}`)
+        } else {
+          message.success('充值成功')
+        }
         setTopupModalVisible(false)
         loadCards()
       } else {

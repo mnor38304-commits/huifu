@@ -1192,13 +1192,15 @@ router.post('/:id/topup', authMiddleware, async (req: AuthRequest, res: Response
       } else if (result.order_status === 'PENDING') {
         // 异步处理中，钱包已扣，等 webhook 回调
         const updatedWallet = db.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId) as any;
+        const currentCard = db.prepare('SELECT balance FROM cards WHERE id = ?').get(card.id) as any;
 
         return res.json({
           code: 0,
-          message: '充值处理中，请稍后查询',
+          message: '充值已提交，请稍后查询',
           data: {
             orderId,
             orderStatus: 'PENDING',
+            newCardBalance: currentCard?.balance || 0,
             walletBalance: updatedWallet ? updatedWallet.balance_usd : 0,
           },
           timestamp: Date.now(),

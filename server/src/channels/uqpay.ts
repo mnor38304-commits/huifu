@@ -313,6 +313,25 @@ export class UqPaySDK {
     return res.json() as T;
   }
 
+  // 不带 idempotency key 的请求（仅用于 UQPay token API 等不支持 idempotency 的接口）
+  private async rawRequest<T>(
+    method: 'GET' | 'POST',
+    path: string,
+  ): Promise<T> {
+    const token = await this.ensureToken();
+    const url = `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-auth-token': token,
+    };
+    const res = await fetch(url, { method, headers });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`[UqPay] 请求失败: ${res.status} ${err}`);
+    }
+    return res.json() as T;
+  }
+
   // ── 持卡人 (Cardholder) ──────────────────────────────────────────────────
 
   /**
@@ -1072,18 +1091,15 @@ export class UqPaySDK {
     expiresIn: number;
     expiresAt: string;
   }> {
-    // UQPay token API 拒绝含连字符的 UUID 格式 idempotency key
-    const cleanKey = randomUUID().replace(/-/g, '');
-    const res = await this.request<{ token: string; expires_in: number; expires_at: string }>(
+    // UQPay /token API 不接受 idempotency key，使用空 body 不传 idempotency key
+    const { token, expires_in, expires_at } = await this.rawRequest<{ token: string; expires_in: number; expires_at: string }>(
       'POST',
-      `/api/v1/issuing/cards/${cardId}/token`,
-      {},
-      { 'x-idempotency-key': cleanKey }
+      `/api/v1/issuing/cards/${cardId}/token`
     );
     return {
-      token: res.token,
-      expiresIn: res.expires_in,
-      expiresAt: res.expires_at,
+      token,
+      expiresIn: expires_in,
+      expiresAt: expires_at,
     };
   }
 
